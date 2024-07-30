@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card mt-5">
+                <div class="card-body">
+                    <h3 class="card-title text-center">Welcome, {{ user_info.first_name }} {{ user_info.last_name }}</h3>
+                    <ul class="list-group">
+                        <li class="list-group-item"><strong>Email:</strong> {{ user_info.email_id }}</li>
+                        <li class="list-group-item"><strong>Role:</strong> {{ user_info.role }}</li>
+                        <li class="list-group-item"><strong>First Name:</strong> {{ user_info.first_name }}</li>
+                        <li class="list-group-item"><strong>Last Name:</strong> {{ user_info.last_name }}</li>
+                        <li class="list-group-item"><strong>Date of Birth:</strong> {{ user_info.date_of_birth }}</li>
+                        <li class="list-group-item"><strong>Gender:</strong> {{ user_info.gender }}</li>
+                        <li class="list-group-item"><strong>House Number/Post Box Number:</strong> {{ user_info.house_number_post_box_number }}</li>
+                        <li class="list-group-item"><strong>Post Code:</strong> {{ user_info.post_code }}</li>
+                        <li class="list-group-item"><strong>Age:</strong> {{ user_info.age }}</li>
+                        <li class="list-group-item"><strong>Medical Condition:</strong> {{ user_info.medical_condition }}</li>
+                        <li class="list-group-item"><strong>Medical Procedure:</strong> {{ user_info.medical_procedure }}</li>
+                        <li class="list-group-item"><strong>Cost:</strong> ${{ user_info.cost }}</li>
+                        <li class="list-group-item"><strong>Length of Stay:</strong> {{ user_info.length_of_stay }} days</li>
+                        <li class="list-group-item"><strong>Readmission:</strong> {{ user_info.readmission }}</li>
+                        <li class="list-group-item"><strong>Outcome:</strong> {{ user_info.outcome }}</li>
+                        <li class="list-group-item"><strong>Satisfaction:</strong> {{ user_info.satisfaction }}/10</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}

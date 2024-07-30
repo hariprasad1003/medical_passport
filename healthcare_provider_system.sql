@@ -1,13 +1,24 @@
 CREATE DATABASE healthcare_provider_system;
 USE healthcare_provider_system;
 
+DROP TABLE IF EXISTS patient;
+DROP TABLE IF EXISTS user;
+DROP TABLE IF EXISTS transfer_request;
+
+CREATE TABLE healthcare_provider (
+    healthcare_provider_id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(255) NOT NULL,
+    house_number_post_box_number VARCHAR(50) NOT NULL,
+    post_code VARCHAR(100) NOT NULL,
+    country VARCHAR(100) NOT NULL
+);
+
+
 CREATE TABLE user (
     user_id INT PRIMARY KEY AUTO_INCREMENT,
-    username VARCHAR(50) NOT NULL,
+    email_id VARCHAR(100) NOT NULL
     password VARCHAR(255) NOT NULL,
-    role VARCHAR(50) NOT NULL,
-    email_id VARCHAR(100),
-    mobile_number VARCHAR(15)
+    role VARCHAR(50) NOT NULL
 );
 
 CREATE TABLE patient (
@@ -33,7 +44,7 @@ CREATE TABLE patient (
 
 CREATE TABLE transfer_request (
     transfer_request_id INT PRIMARY KEY AUTO_INCREMENT,
-    healthcare_provider_id INT,
+    requested_healthcare_provider_id INT,
     transfer_request_type VARCHAR(50),
     patient_first_name VARCHAR(50),
     patient_last_name VARCHAR(50),

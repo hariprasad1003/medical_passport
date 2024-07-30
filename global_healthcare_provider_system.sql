@@ -1,6 +1,8 @@
 CREATE DATABASE global_healthcare_provider_system;
 USE global_healthcare_provider_system;
 
+DROP TABLE IF EXISTS healthcare_provider;
+
 CREATE TABLE healthcare_provider (
     healthcare_provider_id INT PRIMARY KEY,
     healthcare_provider_name VARCHAR(100) NOT NULL,
