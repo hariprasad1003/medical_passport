@@ -14,10 +14,9 @@
 
 {
   "user_id": ObjectId,
-  "username": String,
-  "password": String,  // Store hashed password
-  "role": String,  // Example: "Patient", "Doctor", "Nurse", "Admin"
   "email_id": String,
+  "password": String,
+  "role": String,
   "mobile_number": String
 }
 
@@ -66,6 +65,17 @@
       "follow_up": Date
     }
     // Additional consultation objects
+  ]
+  "diagnosis": [
+    {
+      "diagnosis_id": ObjectId,  // Unique identifier for the diagnosis entry
+      "consultation_id": ObjectId,  // Reference to associated Consultation
+      "diagnosis": String,
+      "procedure": String,
+      "date": Date,
+      "notes": String
+    }
+    // Additional diagnosis objects
   ],
   "medication": [
     {
@@ -78,17 +88,6 @@
       "instructions": String
     }
     // Additional medication objects
-  ],
-  "diagnosis": [
-    {
-      "diagnosis_id": ObjectId,  // Unique identifier for the diagnosis entry
-      "consultation_id": ObjectId,  // Reference to associated Consultation
-      "diagnosis": String,
-      "date": Date,
-      "doctor_id": ObjectId,  // Reference to Staff (Doctor)
-      "notes": String
-    }
-    // Additional diagnosis objects
   ]
 }
 
