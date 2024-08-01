@@ -181,7 +181,6 @@ def generate_user(country):
 def generate_staff(country):
     staff_role = random.choice(staff_roles)
     first_name, last_name = generate_first_name_and_last_name(country)
-    email_address, phone_number = generate_email_and_phone_number(country)
     return {
         "staff_id": generate_increment_number(),
         "user_id": None,
@@ -189,8 +188,6 @@ def generate_staff(country):
         "first_name": first_name,
         "last_name": last_name,
         "role": staff_role,
-        "email_id": email_address,
-        "phone_number": phone_number,
         "address": generate_address(country),
         "specialization": generate_specialization(staff_role),
         "years_of_experience": random.randint(1, 40),
@@ -267,6 +264,7 @@ def generate_patient(country, iterations):
         "first_name": first_name,
         "last_name": last_name,
         "date_of_birth": random_date_of_birth(int(age)),
+        "age": age,
         "gender": gender,
         "address": generate_address(country),
         "consultation": consultation_list,

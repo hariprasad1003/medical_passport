@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<style>
+    .list-group-item:not(:last-child) {
+        border-bottom: none;
+    }
+
+    .list-group {
+        margin: 0;
+        padding: 0;
+    }
+    
+    .list-group-item {
+        margin: 0;
+    }
+</style>
+
+
+<div class="container-fluid mt-5">
+    <ul class="nav nav-tabs" id="myTab" role="tablist">
+        <li class="nav-item">
+            <a class="nav-link active" id="personal-details-tab" data-toggle="tab" href="#personal-details" role="tab" aria-controls="personal-details" aria-selected="true">Personal Details</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" id="medical-history-tab" data-toggle="tab" href="#medical-history" role="tab" aria-controls="medical-history" aria-selected="false">Medical History</a>
+        </li>
+    </ul>
+    <div class="tab-content" id="myTabContent">
+        <div class="tab-pane fade show active" id="personal-details" role="tabpanel" aria-labelledby="personal-details-tab">
+            <ul class="list-group mt-3">
+                <li class="list-group-item"><strong>First Name:</strong> {{ user_info.first_name }}</li>
+                <li class="list-group-item"><strong>Last Name:</strong> {{ user_info.last_name }}</li>
+                <li class="list-group-item"><strong>Email:</strong> {{ user_info.email_address }}</li>
+                <li class="list-group-item"><strong>Gender:</strong> {{ user_info.gender }}</li>
+                <li class="list-group-item"><strong>Date of Birth:</strong> {{ user_info.date_of_birth }}</li>
+                <li class="list-group-item"><strong>Age:</strong> {{ user_info.age }}</li>
+                <li class="list-group-item"><strong>Address:</strong> {{ user_info.house_number_post_box_number }}, {{ user_info.post_code }}, {{ user_info.country }}</li>
+            </ul>
+        </div>
+        <div class="tab-pane fade" id="medical-history" role="tabpanel" aria-labelledby="medical-history-tab">
+            {% if user_info.consultation | length > 0 %}
+                <div class="table-responsive mt-3">
+                    <table class="table table-bordered">
+                        <thead>
+                            <tr>
+                                <th>Consultation Date</th>
+                                <th>Time</th>
+                                <th>Doctor Name</th>
+                                <th>Notes</th>
+                                <th>Diagnosis</th>
+                                <th>Procedure</th>
+                                <th>Medication</th>
+                                <th>Dosage</th>
+                                <th>Instructions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for consult in user_info.consultation %}
+                                <tr>
+                                    <td>{{ consult.date }}</td>
+                                    <td>{{ consult.time }}</td>
+                                    <td>{{ consult.doctor_name }}</td>
+                                    <td>{{ consult.notes }}</td>
+                                    <td>
+                                        {% for diag in user_info.diagnosis %}
+                                            {% if diag.consultation_id == consult.consultation_id %}
+                                                <div>{{ diag.diagnosis }}</div>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </td>
+                                    <td>
+                                        {% for diag in user_info.diagnosis %}
+                                            {% if diag.consultation_id == consult.consultation_id %}
+                                                <div>{{ diag.procedure }}</div>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </td>
+                                    <td>
+                                        {% for med in user_info.medication %}
+                                            {% if med.consultation_id == consult.consultation_id %}
+                                                <div>{{ med.name }}</div>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </td>
+                                    <td>
+                                        {% for med in user_info.medication %}
+                                            {% if med.consultation_id == consult.consultation_id %}
+                                                <div>{{ med.dosage }}</div>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </td>
+                                    <td>
+                                        {% for med in user_info.medication %}
+                                            {% if med.consultation_id == consult.consultation_id %}
+                                                <div>{{ med.instructions }}</div>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="alert alert-info mt-3" role="alert">
+                    No consultations available.
+                </div>
+            {% endif %}                    
+        </div>
+    </div>
+</div>
+{% endblock %}

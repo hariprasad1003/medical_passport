@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<style>
+    .list-group-item:not(:last-child) {
+        border-bottom: none;
+    }
+
+    .custom-modal-width {
+        max-width: 80%;
+    }
+
+    .list-group {
+        margin: 0;
+        padding: 0;
+    }
+
+    .list-group-item {
+        margin: 0;
+    }
+</style>
+
+<div class="container-fluid mt-5">
+
+    <ul class="nav nav-tabs" id="myTab" role="tablist">
+        <li class="nav-item">
+            <a class="nav-link active" id="personal-details-tab" data-toggle="tab" href="#personal-details" role="tab" aria-controls="personal-details" aria-selected="true">Personal Details</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" id="patients-list-tab" data-toggle="tab" href="#patients-list" role="tab" aria-controls="patients-list" aria-selected="false">Patients List</a>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="myTabContent">
+        <div class="tab-pane fade show active" id="personal-details" role="tabpanel" aria-labelledby="personal-details-tab">
+            <ul class="list-group mt-3">
+                <li class="list-group-item"><strong>First Name:</strong> {{ user_info.first_name }}</li>
+                <li class="list-group-item"><strong>Last Name:</strong> {{ user_info.last_name }}</li>
+                <li class="list-group-item"><strong>Email:</strong> {{ user_info.email_address }}</li>
+                <li class="list-group-item"><strong>Role:</strong> {{ user_info.role }}</li>
+                <li class="list-group-item"><strong>Years of Experience:</strong> {{ user_info.years_of_experience }}</li>
+                <li class="list-group-item"><strong>Qualifications:</strong> {{ user_info.qualifications }}</li>
+                <li class="list-group-item"><strong>Address:</strong> {{ user_info.house_number_post_box_number }}, {{ user_info.post_code }}, {{ user_info.country }}</li>
+                {% if user_info.role == "Doctor"%}
+                    <li class="list-group-item"><strong>Specialization:</strong> {{ user_info.specialization }}</li>
+                    <li class="list-group-item"><strong>Consultation Hours:</strong> {{ user_info.consultation_hours }}</li>
+                {% endif %}
+            </ul>
+        </div>
+
+        <div class="tab-pane fade" id="patients-list" role="tabpanel" aria-labelledby="patients-list-tab">
+            <div class="table-responsive mt-3">
+                <table class="table table-bordered">
+                    <thead>
+                        <tr>
+                            <th>First Name</th>
+                            <th>Last Name</th>
+                            <th>Date Of Brith</th>
+                            <th>Age</th>
+                            <th>Gender</th>
+                            <th>Address</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for patient in patients_info %}
+                            <tr data-toggle="modal" data-target="#patientDetailsModal_{{ loop.index }}">
+                                <td>{{ patient.first_name }}</td>
+                                <td>{{ patient.last_name }}</td>
+                                <td>{{ patient.date_of_birth }}</td>
+                                <td>{{ patient.age }}</td>
+                                <td>{{ patient.gender }}</td>
+                                <td>{{ patient.house_number_post_box_number }}, {{ patient.post_code }}, {{ patient.country }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>                    
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+{% for patient in patients_info %}
+    <div class="modal fade" id="patientDetailsModal_{{ loop.index }}" tabindex="-1" role="dialog" aria-labelledby="patientDetailsModalLabel_{{ loop.index }}" aria-hidden="true">
+        <div class="modal-dialog custom-modal-width" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="patientDetailsModalLabel_{{ loop.index }}">Patient Medical Details - {{ patient.first_name }} {{ patient.last_name }}</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+
+                <div class="modal-body">
+                    <ul class="list-group">
+                        <li class="list-group-item"><strong>First Name:</strong> {{ patient.first_name }}</li>
+                        <li class="list-group-item"><strong>Last Name:</strong> {{ patient.last_name }}</li>
+                        <li class="list-group-item"><strong>Date Of Brith:</strong> {{ patient.date_of_birth }}</li>
+                        <li class="list-group-item"><strong>Age:</strong> {{ patient.age }}</li>
+                        <li class="list-group-item"><strong>Gender:</strong> {{ patient.gender }}</li>
+                        <li class="list-group-item"><strong>Address:</strong> {{ patient.house_number_post_box_number }}, {{ patient.post_code }}, {{ patient.country }}</li>
+                    </ul>
+
+                    {% if patient.consultation | length > 0 %}
+                        <div class="table-responsive mt-3">
+                            <table class="table table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>Consultation Date</th>
+                                        <th>Time</th>
+                                        <th>Doctor Name</th>
+                                        <th>Notes</th>
+                                        <th>Diagnosis</th>
+                                        <th>Procedure</th>
+                                        <th>Medication</th>
+                                        <th>Dosage</th>
+                                        <th>Instructions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for consultation in patient.consultation %}
+                                        <tr>
+                                            <td>{{ consultation.date }}</td>
+                                            <td>{{ consultation.time }}</td>
+                                            <td>{{ consultation.doctor_name }}</td>
+                                            <td>{{ consultation.notes }}</td>
+                                            <td>
+                                                {% for diag in patient.diagnosis %}
+                                                    {% if diag.consultation_id == consultation.consultation_id %}
+                                                        <div>{{ diag.diagnosis }}</div>
+                                                    {% endif %}
+                                                {% endfor %}
+                                            </td>
+                                            <td>
+                                                {% for diag in patient.diagnosis %}
+                                                    {% if diag.consultation_id == consultation.consultation_id %}
+                                                        <div>{{ diag.procedure }}</div>
+                                                    {% endif %}
+                                                {% endfor %}
+                                            </td>
+                                            <td>
+                                                {% for med in patient.medication %}
+                                                    {% if med.consultation_id == consultation.consultation_id %}
+                                                        <div>{{ med.name }}</div>
+                                                    {% endif %}
+                                                {% endfor %}
+                                            </td>
+                                            <td>
+                                                {% for med in patient.medication %}
+                                                    {% if med.consultation_id == consultation.consultation_id %}
+                                                        <div>{{ med.dosage }}</div>
+                                                    {% endif %}
+                                                {% endfor %}
+                                            </td>
+                                            <td>
+                                                {% for med in patient.medication %}
+                                                    {% if med.consultation_id == consultation.consultation_id %}
+                                                        <div>{{ med.instructions }}</div>
+                                                    {% endif %}
+                                                {% endfor %}
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info mt-3" role="alert">
+                            No consultations available.
+                        </div>
+                    {% endif %}
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                </div>
+
+            </div>
+        </div>
+    </div>
+{% endfor %}
+
+{% endblock %}
