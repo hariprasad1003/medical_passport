@@ -157,6 +157,17 @@ def serialize_dates(data):
 '''
 COLLECTIONS
 '''
+
+def generate_global_healthcare_provider(country):
+    increment_number = generate_increment_number()
+    healthcare_provider_name = f"Healthcare Provider {increment_number}"
+
+    return {
+        "healthcare_provider_id": increment_number,
+        "healthcare_provider_name": healthcare_provider_name,
+        'domain' : None,
+        "address": generate_address(country)
+    }
         
 def generate_healthcare_provider(country):
     increment_number = generate_increment_number()
@@ -281,7 +292,10 @@ country = 'UK'
 
 def insert_json_to_mongodb(collection_name, json_data):
     client = MongoClient(os.getenv('MONGO_URI'))
-    db = client[os.getenv('DB_NAME')]
+    '''
+    GLOBAL_DB_NAME, DB_NAME
+    '''
+    db = client[os.getenv('GLOBAL_DB_NAME')]
     collection = db[collection_name]
     
     if isinstance(json_data, list):
@@ -300,12 +314,15 @@ def insert_json_to_mongodb(collection_name, json_data):
 # users = [generate_user(country) for _ in range(iterations)]
 # print(json.dumps(users, indent=4))
 
-staffs = [generate_staff(country) for _ in range(iterations)]
+# staffs = [generate_staff(country) for _ in range(iterations)]
 # print(json.dumps(staffs, indent=4))
 
 # patient = generate_patient(country, iterations)
 # patient_serialized = serialize_dates(patient)
 # print(patient_serialized)
+
+healthcare_providers = [generate_global_healthcare_provider(country) for _ in range(iterations)]
+print(json.dumps(healthcare_providers, indent=4))
 
 '''
 collection_names:
@@ -316,5 +333,5 @@ staff
 patient
 '''
 
-collection_name = 'staff'
-insert_json_to_mongodb(collection_name, staffs)
+collection_name = 'healthcare_provider'
+insert_json_to_mongodb(collection_name, healthcare_providers)
