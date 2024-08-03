@@ -5,7 +5,8 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+import requests
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -18,6 +19,22 @@ healthcare_provider_collection = db['healthcare_provider']
 users_collection = db['user']
 staffs_collection = db['staff']
 patients_collection = db['patient']
+transfer_request_sent_collection = db['transfer_request_sent']
+transfer_request_received_collection = db['transfer_request_received']
+
+REQUEST_SENT = 0
+REQUEST_RECEIVED = 1
+WAITING_FOR_PATIENT_APPROVAL = 2
+PATIENT_DATA_TRANSFERRED = 3
+PATIENT_DATA_RECEIVED = 4
+
+request_statuses = {
+    REQUEST_SENT: "Request Sent",
+    REQUEST_RECEIVED: "Request Received",
+    WAITING_FOR_PATIENT_APPROVAL: "Waiting for Patient Approval",
+    PATIENT_DATA_TRANSFERRED: "Patient Data Transferred",
+    PATIENT_DATA_RECEIVED: "Patient Data Received"
+}
 
 def generate_otp():
     return str(random.randint(100000, 999999))
@@ -53,6 +70,19 @@ def format_date_of_birth(date_of_birth_str):
     formatted_date_of_birth = date_of_birth.strftime('%d %B %Y')
     return formatted_date_of_birth
 
+def get_provider_name(provider_id):
+    try:
+        ghs_url = os.getenv('GHS_HEALTHCARE_PROVIDER_URL')
+        response = requests.get(f'{ghs_url}/{provider_id}')
+        if response.status_code == 200:
+            provider_data = response.json()
+            print(provider_data)
+            return provider_data['healthcare_provider_name']
+        else:
+            return "Unknown Provider"
+    except Exception as e:
+        return "Unknown Provider"
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -63,7 +93,7 @@ def login():
         email_address = request.form['email_address']
         password = request.form['password']
 
-        user = users_collection.find_one({'email_address': email_address})
+        user = users_collection.find_one({'email_address': email_address}, {'_id': 0})
 
         if user and user['password'] == password:
             otp = generate_otp()
@@ -89,7 +119,7 @@ def register():
         house_number_post_box_number = request.form['house_number_post_box_number']
         post_code = request.form['post_code']
 
-        user = users_collection.find_one({'email_address': email_address})
+        user = users_collection.find_one({'email_address': email_address}, {'_id': 0})
         if user:
             error = 'User already registered. Please login.'
             return render_template('register.html', error=error)
@@ -100,7 +130,7 @@ def register():
         last_patient = patients_collection.find_one(sort=[("patient_id", -1)])
         new_patient_id = last_patient['patient_id'] + 1 if last_patient else 1
 
-        healthcare_provider = healthcare_provider.find_one(sort=[("healthcare_provider_id", -1)])
+        healthcare_provider = healthcare_provider_collection.find_one(sort=[("healthcare_provider_id", -1)])
         healthcare_provider_id = healthcare_provider['healthcare_provider_id'] if last_patient else 1
 
         users_collection.insert_one({
@@ -155,32 +185,99 @@ def mfa():
 def home():
     if not session.get('logged_in'):
         return redirect(url_for('login'))
-    
+
     email_address = session.get('email')
     if not email_address:
         return redirect(url_for('login'))
-    
-    user = users_collection.find_one({'email_address': email_address})
+
+    user = users_collection.find_one({'email_address': email_address}, {'_id': 0})
     if not user:
         return redirect(url_for('login'))
 
     if user['role'] == 'Patient':
-    
-        patient = patients_collection.find_one({'user_id': user['user_id']})
+        return redirect(url_for('patient_home'))
+    elif user['role'] == 'Staff':
+        return redirect(url_for('staff_home'))
+    else:
+        return redirect(url_for('login'))
 
+@app.route('/patient/home', methods=['GET'])
+def patient_home():
+    email_address = session.get('email')
+    user = users_collection.find_one({'email_address': email_address}, {'_id': 0})
+    if not user or user['role'] != 'Patient':
+        return redirect(url_for('login'))
+
+    patient = patients_collection.find_one({'user_id': user['user_id']})
+    consultations = patient['consultation']
+
+    for consultation in consultations:
+        staff_id = consultation.get('staff_id')
+        staff_member = staffs_collection.find_one({'staff_id': staff_id}, {'_id': 0})
+
+        if staff_member:
+            doctor_name = f"{staff_member['first_name']} {staff_member['last_name']}"
+            consultation['doctor_name'] = doctor_name
+
+    user_info = {
+        'email_address': user['email_address'],
+        'role': user['role'],
+        'first_name': patient['first_name'],
+        'last_name': patient['last_name'],
+        'date_of_birth': format_date_of_birth(patient['date_of_birth']),
+        'age': patient['age'],
+        'gender': patient['gender'],
+        'house_number_post_box_number': patient['address']['house_number_post_box_number'],
+        'post_code': patient['address']['post_code'],
+        'country': patient['address']['country'],
+        'consultation': consultations,
+        'diagnosis': patient['diagnosis'],
+        'medication': patient['medication']
+    }
+
+    return render_template('patient_home.html', user_info=user_info)
+
+@app.route('/staff/home', methods=['GET'])
+def staff_home():
+    email_address = session.get('email')
+    user = users_collection.find_one({'email_address': email_address}, {'_id': 0})
+    if not user or user['role'] != 'Staff':
+        return redirect(url_for('login'))
+
+    staff = staffs_collection.find_one({'user_id': user['user_id']}, {'_id': 0})
+    role = staff['role']
+    user_info = {
+        'email_address': user['email_address'],
+        'role': user['role'],
+        'first_name': staff['first_name'],
+        'last_name': staff['last_name'],
+        'role': role,
+        'house_number_post_box_number': staff['address']['house_number_post_box_number'],
+        'post_code': staff['address']['post_code'],
+        'country': staff['address']['country'],
+        'years_of_experience': staff['years_of_experience'],
+        'qualifications': staff['qualifications']
+    }
+
+    if role == 'Doctor':
+        user_info['specialization'] = staff['specialization']
+        user_info['consultation_hours'] = staff['consultation_hours']
+
+    patients = list(patients_collection.find({},{'_id': 0}))
+    patients_info = []
+
+    for patient in patients:
         consultations = patient['consultation']
 
         for consultation in consultations:
             staff_id = consultation.get('staff_id')
-            staff_member = staffs_collection.find_one({'staff_id': staff_id})
+            staff_member = staffs_collection.find_one({'staff_id': staff_id}, {'_id': 0})
 
             if staff_member:
                 doctor_name = f"{staff_member['first_name']} {staff_member['last_name']}"
                 consultation['doctor_name'] = doctor_name
-    
-        user_info = {
-            'email_address': user['email_address'],
-            'role': user['role'],
+
+        patient_info = {
             'first_name': patient['first_name'],
             'last_name': patient['last_name'],
             'date_of_birth': format_date_of_birth(patient['date_of_birth']),
@@ -193,66 +290,81 @@ def home():
             'diagnosis': patient['diagnosis'],
             'medication': patient['medication']
         }
+
+        patients_info.append(patient_info)
+
+    try:
+        response = requests.get(os.getenv('GHS_ALL_HEALTHCARE_PROVIDER_URL'))
+        if response.status_code == 200:
+            global_healthcare_providers_details = response.json()
+        else:
+            global_healthcare_providers_details = {"error": "Failed to fetch data from API"}
+    except Exception as e:
+        global_healthcare_providers_details = {"error": str(e)}
+
+    return render_template('staff_home.html', user_info=user_info, patients_info=patients_info, global_healthcare_providers_details=global_healthcare_providers_details, request_statuses=request_statuses)
     
-        return render_template('patient_home.html', user_info=user_info)
-    
-    elif user['role'] == 'Staff':
+@app.route('/staff/data/patient/transfer/request', methods=['POST'])
+def patient_data_transfer_request():
+    data = request.json
 
-        staff = staffs_collection.find_one({'user_id': user['user_id']})
-        role = staff['role']
-        user_info = {
-            'email_address': user['email_address'],
-            'role': user['role'],
-            'first_name': staff['first_name'],
-            'last_name': staff['last_name'],
-            'role': role,
-            'house_number_post_box_number': staff['address']['house_number_post_box_number'],
-            'post_code': staff['address']['post_code'],
-            'country': staff['address']['country'],
-            'years_of_experience': staff['years_of_experience'],
-            'qualifications': staff['qualifications']
-        }
+    country = data.get('country')
+    health_provider_to_id = data.get('provider')
+    first_name = data.get('first_name')
+    last_name = data.get('last_name')
+    date_of_birth = data.get('date_of_birth')
+    house_number = data.get('house_number')
+    post_code = data.get('post_code')
 
-        if role == 'Doctor':
-            user_info.specialization = staff['specialization']
-            user_info.consultation_hours = staff['consultation_hours']
-    
-        patients = list(patients_collection.find())
-        patients_info = []
-    
-        for patient in patients:
+    last_transfer_request_sent = transfer_request_sent_collection.find_one(sort=[("user_id", -1)])
+    new_transfer_request_id = last_transfer_request_sent['transfer_request_id'] + 1 if last_transfer_request_sent else 1
 
-            consultations = patient['consultation']
+    healthcare_provider = healthcare_provider_collection.find_one(sort=[("healthcare_provider_id", -1)])
+    healthcare_provider_from_id = healthcare_provider['healthcare_provider_id'] if healthcare_provider else 1
 
-            for consultation in consultations:
-                staff_id = consultation.get('staff_id')
-                staff_member = staffs_collection.find_one({'staff_id': staff_id})
-
-                if staff_member:
-                    doctor_name = f"{staff_member['first_name']} {staff_member['last_name']}"
-                    consultation['doctor_name'] = doctor_name
-
-
-            patient_info = {
-                'first_name': patient['first_name'],
-                'last_name': patient['last_name'],
-                'date_of_birth': format_date_of_birth(patient['date_of_birth']),
-                'age': patient['age'],
-                'gender': patient['gender'],
-                'house_number_post_box_number': patient['address']['house_number_post_box_number'],
-                'post_code': patient['address']['post_code'],
-                'country': patient['address']['country'],
-                'consultation': consultations,
-                'diagnosis': patient['diagnosis'],
-                'medication': patient['medication']
+    transfer_request = {
+        'transfer_request_id' : new_transfer_request_id,
+        'request_from_healthcare_provider_id' : int(healthcare_provider_from_id),
+        'request_to_healthcare_provider_id' : int(health_provider_to_id),
+        'request_type' : REQUEST_SENT,
+        "patient_info": {
+            'first_name' : first_name,
+            'last_name' : last_name,
+            'date_of_birth' : date_of_birth,
+            'address' : {
+                'house_number' : house_number,
+                'post_code' : post_code,
+                'country' : country
             }
+        },
+        'request_status' : REQUEST_SENT
+    }
 
-            patients_info.append(patient_info)
+    transfer_request_sent_collection.insert_one(transfer_request)
 
-        return render_template('staff_home.html', user_info=user_info, patients_info=patients_info)
-    
-    else:
-        return redirect(url_for('login'))
+    return jsonify({"message": "Request successfully received"}), 200
+
+@app.route('/staff/transfer/request/sent/list', methods=['GET'])
+def patient_data_transfer_request_sent_list():
+
+    transfer_requests_sent = list(transfer_request_sent_collection.find({},{'_id': 0}))
+
+    for request in transfer_requests_sent:
+        request['from_provider_name'] = get_provider_name(request['request_from_healthcare_provider_id'])
+        request['to_provider_name'] = get_provider_name(request['request_to_healthcare_provider_id'])
+
+    return jsonify(transfer_requests_sent), 200
+
+@app.route('/staff/transfer/request/received/list', methods=['GET'])
+def patient_data_transfer_request_received_list():
+
+    transfer_requests_received = list(transfer_request_received_collection.find({},{'_id': 0}))
+
+    for request in transfer_requests_received:
+        request['from_provider_name'] = get_provider_name(request['request_from_healthcare_provider_id'])
+        request['to_provider_name'] = get_provider_name(request['request_to_healthcare_provider_id'])
+
+    return jsonify(transfer_requests_received), 200
 
 @app.route('/logout')
 def logout():

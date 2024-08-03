@@ -22,18 +22,21 @@
 </style>
 
 <div class="container-fluid mt-5">
-
     <ul class="nav nav-tabs" id="myTab" role="tablist">
         <li class="nav-item">
             <a class="nav-link active" id="personal-details-tab" data-toggle="tab" href="#personal-details" role="tab" aria-controls="personal-details" aria-selected="true">Personal Details</a>
         </li>
-
         <li class="nav-item">
             <a class="nav-link" id="patients-list-tab" data-toggle="tab" href="#patients-list" role="tab" aria-controls="patients-list" aria-selected="false">Patients List</a>
         </li>
-
         <li class="nav-item">
-            <a class="nav-link" id="data-transfer-request-tab" data-toggle="tab" href="#data-transfer-request" role="tab" aria-controls="data-transfer-request" aria-selected="false">Patient Data Transfer Request</a>
+            <a class="nav-link" id="data-transfer-request-tab" data-toggle="tab" href="#data-transfer-request" role="tab" aria-controls="data-transfer-request" aria-selected="false">Patient Data Transfer Request Form</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" id="transfer-request-sent-tab" data-toggle="tab" href="#transfer-request-sent" role="tab" aria-controls="transfer-request-sent" aria-selected="false">Patient Data Transfer Request Sent</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" id="transfer-request-received-tab" data-toggle="tab" href="#transfer-request-received" role="tab" aria-controls="transfer-request-received" aria-selected="false">Patient Data Transfer Request Received</a>
         </li>
     </ul>
 
@@ -61,7 +64,7 @@
                         <tr>
                             <th>First Name</th>
                             <th>Last Name</th>
-                            <th>Date Of Brith</th>
+                            <th>Date Of Birth</th>
                             <th>Age</th>
                             <th>Gender</th>
                             <th>Address</th>
@@ -82,9 +85,60 @@
                 </table>
             </div>
         </div>
+
+        <div class="tab-pane fade" id="data-transfer-request" role="tabpanel" aria-labelledby="data-transfer-request-tab">
+            <div class="mt-3">
+                <form id="dataTransferForm">
+                    <div class="form-group">
+                        <label for="countrySelect">Select Country</label>
+                        <select class="form-control" id="countrySelect" name="country">
+                            <option value="" disabled selected>Select a country</option>
+                            {% for country, providers in global_healthcare_providers_details.items() %}
+                                <option value="{{ country }}">{{ country }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="providerSelect">Select Healthcare Provider</label>
+                        <select class="form-control" id="providerSelect" name="provider" disabled>
+                            <option value="" disabled selected>Select a provider</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="firstNameInput">First Name</label>
+                        <input type="text" class="form-control" id="firstNameInput" name="first_name" placeholder="Enter first name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="lastNameInput">Last Name</label>
+                        <input type="text" class="form-control" id="lastNameInput" name="last_name" placeholder="Enter last name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="dobInput">Date of Birth</label>
+                        <input type="date" class="form-control" id="dobInput" name="date_of_birth" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="houseNumberInput">House Number</label>
+                        <input type="text" class="form-control" id="houseNumberInput" name="house_number" placeholder="Enter house number" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="postCodeInput">Post Code</label>
+                        <input type="text" class="form-control" id="postCodeInput" name="post_code" placeholder="Enter post code" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Send Request</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="transfer-request-sent" role="tabpanel" aria-labelledby="transfer-request-sent-tab">
+            <div id="sent-requests-content"></div>
+        </div>
+
+        <div class="tab-pane fade" id="transfer-request-received" role="tabpanel" aria-labelledby="transfer-request-received-tab">
+            <div id="received-requests-content"></div>
+        </div>
+        
     </div>
 </div>
-
 
 {% for patient in patients_info %}
     <div class="modal fade" id="patientDetailsModal_{{ loop.index }}" tabindex="-1" role="dialog" aria-labelledby="patientDetailsModalLabel_{{ loop.index }}" aria-hidden="true">
@@ -101,7 +155,7 @@
                     <ul class="list-group">
                         <li class="list-group-item"><strong>First Name:</strong> {{ patient.first_name }}</li>
                         <li class="list-group-item"><strong>Last Name:</strong> {{ patient.last_name }}</li>
-                        <li class="list-group-item"><strong>Date Of Brith:</strong> {{ patient.date_of_birth }}</li>
+                        <li class="list-group-item"><strong>Date Of Birth:</strong> {{ patient.date_of_birth }}</li>
                         <li class="list-group-item"><strong>Age:</strong> {{ patient.age }}</li>
                         <li class="list-group-item"><strong>Gender:</strong> {{ patient.gender }}</li>
                         <li class="list-group-item"><strong>Address:</strong> {{ patient.house_number_post_box_number }}, {{ patient.post_code }}, {{ patient.country }}</li>
@@ -185,5 +239,142 @@
         </div>
     </div>
 {% endfor %}
+
+<div class="modal fade" id="responseModal" tabindex="-1" role="dialog" aria-labelledby="responseModalLabel" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="responseModalLabel">Response</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div id="responseMessage"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        if (typeof jQuery !== 'undefined') {
+            console.log('jQuery is loaded');
+        } else {
+            console.log('jQuery is not loaded');
+        }
+
+        var countrySelect = document.getElementById('countrySelect');
+        var providerSelect = document.getElementById('providerSelect');
+        var globalHealthcareProviders = {{ global_healthcare_providers_details | tojson }};
+        var requestStatuses= {{ request_statuses | tojson }};
+        
+        countrySelect.addEventListener('change', function () {
+            var selectedCountry = this.value;
+            providerSelect.innerHTML = '';
+            providerSelect.disabled = false;
+            
+            var defaultOption = document.createElement('option');
+            defaultOption.text = 'Select a provider';
+            defaultOption.disabled = true;
+            defaultOption.selected = true;
+            providerSelect.add(defaultOption);
+            
+            if (globalHealthcareProviders[selectedCountry]) {
+                globalHealthcareProviders[selectedCountry].forEach(function (provider) {
+                    var option = document.createElement('option');
+                    option.text = provider.healthcare_provider_name;
+                    option.value = provider.healthcare_provider_id;
+                    providerSelect.add(option);
+                });
+            }
+        });
+
+        document.getElementById('dataTransferForm').addEventListener('submit', function (event) {
+            event.preventDefault();
+
+            var formData = new FormData(this);
+            var data = {};
+            formData.forEach((value, key) => data[key] = value);
+
+            $.ajax({
+                url: '/staff/data/patient/transfer/request',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify(data),
+                success: function(result) {
+                    var modalTitle = document.getElementById('responseModalLabel');
+                    var modalBody = document.getElementById('responseMessage');
+
+                    if (result.message) {
+                        modalTitle.innerText = 'Success';
+                        modalBody.innerHTML = `<div class="alert alert-success">${result.message}</div>`;
+                    } else if (result.error) {
+                        modalTitle.innerText = 'Error';
+                        modalBody.innerHTML = `<div class="alert alert-danger">${result.error}</div>`;
+                    }
+
+                    $('#responseModal').modal('show');
+                },
+                error: function(jqXHR, textStatus, errorThrown) {
+                    console.error('Error:', errorThrown);
+                    var modalTitle = document.getElementById('responseModalLabel');
+                    var modalBody = document.getElementById('responseMessage');
+
+                    modalTitle.innerText = 'Error';
+                    modalBody.innerHTML = `<div class="alert alert-danger">An unexpected error occurred. Please try again later.</div>`;
+
+                    $('#responseModal').modal('show');
+                }
+            });
+        });
+
+
+        $('#transfer-request-sent-tab').on('click', function() {
+            if ($('#sent-requests-content').is(':empty')) {
+                $.ajax({
+                    url: '/staff/transfer/request/sent/list',
+                    method: 'GET',
+                    success: function(data) {
+                        let content = '<div class="table-responsive mt-3"><table class="table table-bordered"><thead><tr><th>Transfer ID</th><th>From Provider</th><th>To Provider</th><th>Patient Name</th><th>Date of Birth</th><th>Address</th><th>Status</th></tr></thead><tbody>';
+                        data.forEach(request => {
+                            content += `<tr><td>${request.transfer_request_id}</td><td>${request.from_provider_name}</td><td>${request.to_provider_name}</td><td>${request.patient_info.first_name} ${request.patient_info.last_name}</td><td>${request.patient_info.date_of_birth}</td><td>${request.patient_info.address.house_number}, ${request.patient_info.address.post_code}, ${request.patient_info.address.country}</td><td>${requestStatuses[request.request_status]}</td></tr>`;
+                        });
+                        content += '</tbody></table></div>';
+                        $('#sent-requests-content').html(content);
+                    },
+                    error: function() {
+                        $('#sent-requests-content').html('<div class="alert alert-danger">Failed to load data.</div>');
+                    }
+                });
+            }
+        });
+
+        $('#transfer-request-received-tab').on('click', function() {
+            if ($('#received-requests-content').is(':empty')) {
+                $.ajax({
+                    url: '/staff/transfer/request/received/list',
+                    method: 'GET',
+                    success: function(data) {
+                        let content = '<div class="table-responsive mt-3"><table class="table table-bordered"><thead><tr><th>Transfer ID</th><th>From Provider</th><th>To Provider</th><th>Patient Name</th><th>Date of Birth</th><th>Address</th><th>Status</th></tr></thead><tbody>';
+                        data.forEach(request => {
+                            content += `<tr><td>${request.transfer_request_id}</td><td>${request.from_provider_name}</td><td>${request.to_provider_name}</td><td>${request.patient_info.first_name} ${request.patient_info.last_name}</td><td>${request.patient_info.date_of_birth}</td><td>${request.patient_info.address.house_number}, ${request.patient_info.address.post_code}, ${request.patient_info.address.country}</td><td>${requestStatuses[request.request_status]}</td></tr>`;
+                        });
+                        content += '</tbody></table></div>';
+                        $('#received-requests-content').html(content);
+                    },
+                    error: function() {
+                        $('#received-requests-content').html('<div class="alert alert-danger">Failed to load data.</div>');
+                    }
+                });
+            }
+        });
+    });
+</script>
+
 
 {% endblock %}

@@ -275,7 +275,7 @@ def generate_patient(country, iterations):
         "first_name": first_name,
         "last_name": last_name,
         "date_of_birth": random_date_of_birth(int(age)),
-        "age": age,
+        "age": int(age),
         "gender": gender,
         "address": generate_address(country),
         "consultation": consultation_list,
@@ -287,13 +287,17 @@ def generate_patient(country, iterations):
 GENERATE
 '''
 
+'''
+UK, USA
+'''
+
 iterations = 1
 country = 'UK'
 
 def insert_json_to_mongodb(collection_name, json_data):
     client = MongoClient(os.getenv('MONGO_URI'))
     '''
-    GLOBAL_DB_NAME, DB_NAME
+    GLOBAL_DB_NAME, DB_NAME, DB_NAME_2
     '''
     db = client[os.getenv('GLOBAL_DB_NAME')]
     collection = db[collection_name]
