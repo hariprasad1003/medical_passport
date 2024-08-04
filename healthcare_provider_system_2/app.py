@@ -24,14 +24,14 @@ transfer_request_received_collection = db['transfer_request_received']
 
 REQUEST_SENT = 0
 REQUEST_RECEIVED = 1
-WAITING_FOR_PATIENT_APPROVAL = 2
+REQUEST_APPROVED = 2
 PATIENT_DATA_TRANSFERRED = 3
 PATIENT_DATA_RECEIVED = 4
 
 request_statuses = {
     REQUEST_SENT: "Request Sent",
     REQUEST_RECEIVED: "Request Received",
-    WAITING_FOR_PATIENT_APPROVAL: "Waiting for Patient Approval",
+    REQUEST_APPROVED: "Request Approved",
     PATIENT_DATA_TRANSFERRED: "Patient Data Transferred",
     PATIENT_DATA_RECEIVED: "Patient Data Received"
 }
@@ -100,6 +100,41 @@ def get_healthcare_providers_list_based_on_country(healthcare_providers_list):
         country_based_providers[country].append(healthcare_provider)
     return country_based_providers
     
+def find_patient_by_first_name(first_name, last_name, date_of_birth, house_number, post_code, country):
+    formatted_first_name = first_name.title()
+    formatted_last_name = last_name.title()
+    
+    patients_with_same_first_name = patients_collection.find({'first_name': formatted_first_name})
+    
+    for patient in patients_with_same_first_name:
+        patient_dob = patient.get('date_of_birth')
+        if patient_dob:
+            try:
+                patient_dob_date = datetime.strptime(patient_dob, '%Y-%m-%dT%H:%M:%S.%f').date()
+            except ValueError:
+                patient_dob_date = datetime.strptime(patient_dob, '%Y-%m-%d').date()
+            
+            try:
+                given_dob_date = datetime.strptime(date_of_birth, '%Y-%m-%dT%H:%M:%S.%f').date()
+            except ValueError:
+                given_dob_date = datetime.strptime(date_of_birth, '%Y-%m-%d').date()
+        else:
+            continue
+        
+        patient_post_code = patient.get('address', {}).get('post_code', '').replace(' ', '')
+        given_post_code = post_code.replace(' ', '')
+        
+        if (
+            patient.get('last_name') == formatted_last_name and
+            patient_dob_date == given_dob_date and
+            patient.get('address', {}).get('house_number_post_box_number') == house_number and
+            patient_post_code == given_post_code and
+            patient.get('address', {}).get('country') == country
+        ):
+            return patient
+    
+    return None
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -239,6 +274,7 @@ def patient_home():
     user_info = {
         'email_address': user['email_address'],
         'role': user['role'],
+        'patient_id': patient['patient_id'],
         'first_name': patient['first_name'],
         'last_name': patient['last_name'],
         'date_of_birth': format_date_of_birth(patient['date_of_birth']),
@@ -252,7 +288,7 @@ def patient_home():
         'medication': patient['medication']
     }
 
-    return render_template('patient_home.html', user_info=user_info)
+    return render_template('patient_home.html', user_info=user_info, request_statuses=request_statuses)
 
 @app.route('/staff/home', methods=['GET'])
 def staff_home():
@@ -289,7 +325,6 @@ def staff_home():
         for consultation in consultations:
             staff_id = consultation.get('staff_id')
             staff_member = staffs_collection.find_one({'staff_id': staff_id}, {'_id': 0})
-            print(staff_member)
 
             if staff_member:
                 doctor_name = f"{staff_member['first_name']} {staff_member['last_name']}"
@@ -353,13 +388,12 @@ def patient_data_transfer_request_sent():
     }
 
     healthcare_providers_list = get_global_healthcare_providers_details()
-    print(healthcare_providers_list)
 
     healthcare_provider_url = None
     for healthcare_provider in healthcare_providers_list:
         if healthcare_provider['healthcare_provider_id'] == health_provider_to_id:
             web_address = healthcare_provider.get('web_address', {})
-            healthcare_provider_url = f"{web_address.get('domain')}{web_address.get('endpoint')}"
+            healthcare_provider_url = f"{web_address.get('domain')}{web_address.get('request_endpoint')}"
 
     transfer_data_request_query = {
         'healthcare_provider_id' : healthcare_provider_from_id,
@@ -401,21 +435,14 @@ def patient_data_transfer_request_received():
     healthcare_provider = healthcare_provider_collection.find_one(sort=[("healthcare_provider_id", -1)])
     health_provider_to_id = int(healthcare_provider['healthcare_provider_id']) if healthcare_provider else 1
 
+    patient = find_patient_by_first_name(first_name, last_name, date_of_birth, house_number, post_code, country)
+
     transfer_request = {
         'transfer_request_id' : new_transfer_request_id,
         'request_from_healthcare_provider_id' : healthcare_provider_from_id,
         'request_to_healthcare_provider_id' : health_provider_to_id,
         'request_type' : REQUEST_RECEIVED,
-        "patient_info": {
-            'first_name' : first_name,
-            'last_name' : last_name,
-            'date_of_birth' : date_of_birth,
-            'address' : {
-                'house_number' : house_number,
-                'post_code' : post_code,
-                'country' : country
-            }
-        },
+        "patient_id": patient.get('patient_id'),
         'request_status' : REQUEST_RECEIVED
     }
 
@@ -429,6 +456,7 @@ def patient_data_transfer_request_sent_list():
     transfer_requests_sent = list(transfer_request_sent_collection.find({},{'_id': 0}))
 
     for request in transfer_requests_sent:
+        request['patient_info']['date_of_birth'] = format_date_of_birth(request['patient_info']['date_of_birth'])
         request['from_provider_name'] = get_provider_name(request['request_from_healthcare_provider_id'])
         request['to_provider_name'] = get_provider_name(request['request_to_healthcare_provider_id'])
 
@@ -440,10 +468,120 @@ def patient_data_transfer_request_received_list():
     transfer_requests_received = list(transfer_request_received_collection.find({},{'_id': 0}))
 
     for request in transfer_requests_received:
+        patient = patients_collection.find_one({'patient_id': request['patient_id']})
+        request['patient_info'] = {
+            'first_name' : patient.get('first_name'),
+            'last_name' : patient.get('last_name'),
+            'date_of_birth' : format_date_of_birth(patient.get('date_of_birth')),
+            'address' : patient.get('address')
+        }
         request['from_provider_name'] = get_provider_name(request['request_from_healthcare_provider_id'])
         request['to_provider_name'] = get_provider_name(request['request_to_healthcare_provider_id'])
 
     return jsonify(transfer_requests_received), 200
+
+@app.route('/patient/transfer/request/received/list/<patient_id>', methods=['GET'])
+def patient_data_transfer_request_received_list_endpoint_for_patient(patient_id):
+
+    transfer_requests_received = list(transfer_request_received_collection.find({'patient_id': int(patient_id)},{'_id': 0}))
+
+    for request in transfer_requests_received:
+        request['from_provider_name'] = get_provider_name(request['request_from_healthcare_provider_id'])
+        request['to_provider_name'] = get_provider_name(request['request_to_healthcare_provider_id'])
+
+    return jsonify(transfer_requests_received), 200
+
+@app.route('/patient/transfer/request/approve/<transfer_request_id>', methods=['POST'])
+def patient_transfer_request_approve(transfer_request_id):
+
+    transfer_request_id = int(transfer_request_id)
+
+    if transfer_request_id is None:
+        return jsonify({"error": "Invalid Request Id"}), 400
+    
+    transfer_request = transfer_request_received_collection.find_one({'transfer_request_id': transfer_request_id})
+    
+    if not transfer_request:
+        return jsonify({"error": "Request Id not found"}), 404
+
+    transfer_request_received_collection.update_one(
+        {'transfer_request_id': transfer_request_id},
+        {'$set': {'request_status': REQUEST_APPROVED}}
+    )
+    
+    return jsonify({"message": "Request approved successfully"}), 200
+
+@app.route('/staff/patient/data/transfer/send/<transfer_request_id>', methods=['GET'])
+def patient_data_transfer_send(transfer_request_id):
+
+    transfer_request_id = int(transfer_request_id)
+
+    if transfer_request_id is None:
+        return jsonify({"error": "Invalid Request Id"}), 400
+    
+    transfer_request = transfer_request_received_collection.find_one({'transfer_request_id': transfer_request_id}, {'_id': 0})
+
+    patient_id = transfer_request.get('patient_id')
+
+    patient = patients_collection.find_one({'patient_id': patient_id}, {'_id': 0})
+    patient['patient_id'] = None
+    patient['user_id'] = None
+    patient['original_healthcare_provider_id'] = patient['healthcare_provider_id'] 
+    patient['healthcare_provider_id'] = None
+
+    if not patient:
+        return jsonify({"error": "Patient not found"}), 404
+
+    for consultation in patient.get('consultation', []):
+        staff_id = consultation.get('staff_id')
+        if staff_id:
+            staff = staffs_collection.find_one({'staff_id': staff_id}, {'first_name': 1, 'last_name': 1, '_id': 0})
+            if staff:
+                staff_name = f"{staff['first_name']} {staff['last_name']}"
+            else:
+                staff_name = "Unknown Staff"
+            consultation['staff_name'] = staff_name
+            consultation['staff_id'] = None
+
+    healthcare_providers_list = get_global_healthcare_providers_details()
+    request_from_healthcare_provider_id = transfer_request.get('request_from_healthcare_provider_id')
+
+    healthcare_provider_url = None
+    for healthcare_provider in healthcare_providers_list:
+        if healthcare_provider['healthcare_provider_id'] == request_from_healthcare_provider_id:
+            web_address = healthcare_provider.get('web_address', {})
+            healthcare_provider_url = f"{web_address.get('domain')}{web_address.get('transfer_endpoint')}"
+
+    response = requests.post(healthcare_provider_url, json=patient)
+    if response.status_code == 200:
+        print('Request sent successfully')
+        print(response.json())
+    else:
+        print(f'Failed to sent request: {response.status_code}')
+        print(response.text)
+
+    transfer_request_received_collection.update_one(
+        {'transfer_request_id': transfer_request_id},
+        {'$set': {'request_status': PATIENT_DATA_TRANSFERRED}}
+    )
+    return jsonify({"message": "Patient data sent successfully", "data": patient}), 200
+
+@app.route('/staff/patient/data/transfer/receive', methods=['POST'])
+def patient_data_transfer_receive():
+    data = request.json
+
+    last_patient = patients_collection.find_one(sort=[("patient_id", -1)])
+    new_patient_id = last_patient['patient_id'] + 1 if last_patient else 1
+
+    healthcare_provider = healthcare_provider_collection.find_one(sort=[("healthcare_provider_id", -1)])
+    healthcare_provider_id = healthcare_provider['healthcare_provider_id'] if last_patient else 1
+
+    data.patient_id = new_patient_id
+    data.user_id = healthcare_provider_id
+
+    patients_collection.insert_one(data)
+
+    return jsonify({"message": "Patient data received successfully"}), 200
 
 @app.route('/logout')
 def logout():

@@ -271,7 +271,7 @@
         var countrySelect = document.getElementById('countrySelect');
         var providerSelect = document.getElementById('providerSelect');
         var globalHealthcareProviders = {{ global_healthcare_providers_details | tojson }};
-        var requestStatuses= {{ request_statuses | tojson }};
+        var requestStatuses = {{ request_statuses | tojson }};
         
         countrySelect.addEventListener('change', function () {
             var selectedCountry = this.value;
@@ -333,7 +333,6 @@
             });
         });
 
-
         $('#transfer-request-sent-tab').on('click', function() {
             $('#sent-requests-content').html('');
             
@@ -363,9 +362,17 @@
                 method: 'GET',
                 cache: false,
                 success: function(data) {
-                    let content = '<div class="table-responsive mt-3"><table class="table table-bordered"><thead><tr><th>Transfer ID</th><th>From Provider</th><th>To Provider</th><th>Patient Name</th><th>Date of Birth</th><th>Address</th><th>Status</th></tr></thead><tbody>';
+                    let content = '<div class="table-responsive mt-3"><table class="table table-bordered"><thead><tr><th>Transfer ID</th><th>From Provider</th><th>To Provider</th><th>Patient Name</th><th>Date of Birth</th><th>Address</th><th>Status</th><th>Action</th></tr></thead><tbody>';
                     data.forEach(request => {
-                        content += `<tr><td>${request.transfer_request_id}</td><td>${request.from_provider_name}</td><td>${request.to_provider_name}</td><td>${request.patient_info.first_name} ${request.patient_info.last_name}</td><td>${request.patient_info.date_of_birth}</td><td>${request.patient_info.address.house_number}, ${request.patient_info.address.post_code}, ${request.patient_info.address.country}</td><td>${requestStatuses[request.request_status]}</td></tr>`;
+                        content += `<tr><td>${request.transfer_request_id}</td><td>${request.from_provider_name}</td><td>${request.to_provider_name}</td><td>${request.patient_info.first_name} ${request.patient_info.last_name}</td><td>${request.patient_info.date_of_birth}</td><td>${request.patient_info.address.house_number_post_box_number}, ${request.patient_info.address.post_code}, ${request.patient_info.address.country}</td><td>${requestStatuses[request.request_status]}</td>`;
+                        
+                        if (request.request_status <= 2) {
+                            content += `<td><button class="btn btn-primary" onclick="transferData(${request.transfer_request_id})">Transfer Data</button></td>`;
+                        } else {
+                            content += `<td>Transfer Complete</td>`;
+                        }
+
+                        content += `</tr>`;
                     });
                     content += '</tbody></table></div>';
                     $('#received-requests-content').html(content);
@@ -376,7 +383,22 @@
             });
         });
     });
-</script>
 
+    function transferData(transferRequestId) {
+        alert('Initiating data transfer for request ID: ' + transferRequestId);
+
+        $.ajax({
+            url: `/staff/patient/data/transfer/send/${transferRequestId}`,
+            method: 'GET',
+            success: function(response) {
+                alert(response.message || 'Data transfer completed successfully.');
+            },
+            error: function(jqXHR, textStatus, errorThrown) {
+                console.error('Error transferring data:', errorThrown);
+                alert('An error occurred while transferring data. Please try again.');
+            }
+        });
+    }
+</script>
 
 {% endblock %}
