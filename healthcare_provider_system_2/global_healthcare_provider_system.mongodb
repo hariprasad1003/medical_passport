@@ -1,0 +1,10 @@
+{
+  "healthcare_provider_id": ObjectId,
+  "healthcare_provider_name": String,
+  "domain": String,
+  "address": {
+    "house_number_post_box_number": String,
+    "post_code": String,
+    "country": String
+  }
+}

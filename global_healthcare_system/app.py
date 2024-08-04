@@ -18,14 +18,7 @@ def get_all_healthcare_provider_details():
         all_healthcare_providers = healthcare_provider_collection.find({}, {'_id': 0})
         providers_list = list(all_healthcare_providers)
         
-        country_based_providers = {}
-        for provider in providers_list:
-            country = provider['address']['country']
-            if country not in country_based_providers:
-                country_based_providers[country] = []
-            country_based_providers[country].append(provider)
-        
-        return jsonify(country_based_providers), 200
+        return jsonify(providers_list), 200
     except Exception as e:
         return str(e), 500
 

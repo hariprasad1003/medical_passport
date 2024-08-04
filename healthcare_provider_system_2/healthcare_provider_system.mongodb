@@ -1,0 +1,111 @@
+1. Healthcare_Provider Collection
+
+{
+  "healthcare_provider_id": ObjectId,
+  "healthcare_provider_name": String,
+  "address": {
+    "house_number_post_box_number": String,
+    "post_code": String,
+    "country": String
+  }
+}
+
+2. User Collection
+
+{
+  "user_id": ObjectId,
+  "email_id": String,
+  "password": String,
+  "role": String,
+  "mobile_number": String
+}
+
+3. Staff Collection
+
+{
+  "staff_id": ObjectId,
+  "first_name": String,
+  "last_name": String,
+  "role": String,  // Example: "Doctor", "Nurse", "Admin"
+  "specialization": String,  // Relevant if role is "Doctor"
+  "email_id": String,
+  "phone_number": String,
+  "address": {
+    "house_number_post_box_number": String,
+    "post_code": String,
+    "country": String
+  },
+  "healthcare_provider_id": ObjectId,  // Reference to Healthcare_Provider
+  "years_of_experience": Number,
+  "qualifications": [String],
+  "consultation_hours": String  // Example: "Mon-Fri 9AM-5PM", relevant for clinical roles
+}
+
+4. Patient Collection
+
+{
+  "patient_id": ObjectId,
+  "user_id": ObjectId,  // Reference to User
+  "healthcare_provider_id": ObjectId,  // Reference to Healthcare_Provider
+  "first_name": String,
+  "last_name": String,
+  "date_of_birth": Date,
+  "gender": String,
+  "address": {
+    "house_number_post_box_number": String,
+    "post_code": String,
+    "country": String
+  },
+  "consultation": [
+    {
+      "consultation_id": ObjectId,  // Unique identifier for the consultation
+      "date": Date,
+      "staff_id": ObjectId,  // Reference to Staff (Doctor)
+      "notes": String,
+      "follow_up": Date
+    }
+    // Additional consultation objects
+  ]
+  "diagnosis": [
+    {
+      "diagnosis_id": ObjectId,  // Unique identifier for the diagnosis entry
+      "consultation_id": ObjectId,  // Reference to associated Consultation
+      "diagnosis": String,
+      "procedure": String,
+      "date": Date,
+      "notes": String
+    }
+    // Additional diagnosis objects
+  ],
+  "medication": [
+    {
+      "medication_id": ObjectId,  // Unique identifier for the medication entry
+      "consultation_id": ObjectId,  // Reference to associated Consultation
+      "name": String,
+      "dosage": String,
+      "start_date": Date,
+      "end_date": Date,
+      "instructions": String
+    }
+    // Additional medication objects
+  ]
+}
+
+5. Transfer_Request Collection
+
+{
+  "transfer_request_id": ObjectId,
+  "healthcare_provider_id": ObjectId,  // Reference to Healthcare_Provider initiating the transfer
+  "transfer_request_type": String,  // Type of request, e.g., "Data Transfer", "Consultation Request"
+  "patient_info": {
+    "first_name": String,
+    "last_name": String,
+    "date_of_birth": Date,
+    "address": {
+      "house_number_post_box_number": String,
+      "post_code": String,
+      "country": String
+    }
+  },
+  "status": String  // Status of the transfer request, e.g., "Pending", "Completed"
+}
