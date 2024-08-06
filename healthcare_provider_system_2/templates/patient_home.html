@@ -148,7 +148,7 @@
                         tableHtml += `<td>${requestStatuses[request.request_status]}</td>`;
                         
                         if (request.request_status < 2) {
-                            tableHtml += `<td><button class="btn btn-success" onclick="approveTransfer(${request.transfer_request_id})">Approve</button></td>`;
+                            tableHtml += `<td><button class="btn btn-success" id="approve-btn-${request.transfer_request_id}" onclick="approveTransfer(${request.transfer_request_id})">Approve</button></td>`;
                         } else {
                             tableHtml += `<td>Already Approved</td>`;
                         }
@@ -168,19 +168,18 @@
     });
 
     function approveTransfer(transferRequestId) {
-        alert('Approving transfer request ID: ' + transferRequestId);
         $.ajax({
             url: `/patient/transfer/request/approve/${transferRequestId}`,
             method: 'POST',
             success: function(response) {
-                alert('Transfer approved successfully!');
+                $(`#approve-btn-${transferRequestId}`).text('Approved').attr('disabled', true);
             },
             error: function(xhr, status, error) {
-                alert('Error approving transfer request.');
                 console.error('Error approving transfer request:', error);
             }
         });
     }
 </script>
+
 
 {% endblock %}

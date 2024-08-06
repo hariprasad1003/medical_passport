@@ -17,7 +17,6 @@
     }
 </style>
 
-
 <div class="container-fluid mt-5">
     <ul class="nav nav-tabs" id="myTab" role="tablist">
         <li class="nav-item">
@@ -26,8 +25,12 @@
         <li class="nav-item">
             <a class="nav-link" id="medical-history-tab" data-toggle="tab" href="#medical-history" role="tab" aria-controls="medical-history" aria-selected="false">Medical History</a>
         </li>
+        <li class="nav-item">
+            <a class="nav-link" id="transfer-request-tab" data-toggle="tab" href="#transfer-request" role="tab" aria-controls="transfer-request" aria-selected="false">Patient Data Transfer Request</a>
+        </li>
     </ul>
     <div class="tab-content" id="myTabContent">
+
         <div class="tab-pane fade show active" id="personal-details" role="tabpanel" aria-labelledby="personal-details-tab">
             <ul class="list-group mt-3">
                 <li class="list-group-item"><strong>First Name:</strong> {{ user_info.first_name }}</li>
@@ -39,6 +42,7 @@
                 <li class="list-group-item"><strong>Address:</strong> {{ user_info.house_number_post_box_number }}, {{ user_info.post_code }}, {{ user_info.country }}</li>
             </ul>
         </div>
+
         <div class="tab-pane fade" id="medical-history" role="tabpanel" aria-labelledby="medical-history-tab">
             {% if user_info.consultation | length > 0 %}
                 <div class="table-responsive mt-3">
@@ -109,6 +113,73 @@
                 </div>
             {% endif %}                    
         </div>
+
+        <div class="tab-pane fade" id="transfer-request" role="tabpanel" aria-labelledby="transfer-request-tab">
+            <div id="received-requests-content">
+                
+            </div>
+        </div>
+
     </div>
 </div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        
+        var patientId = {{ user_info.patient_id }};
+        var requestStatuses = {{ request_statuses | tojson }};
+
+        $('#transfer-request-tab').on('click', function() {
+            $('#received-requests-content').html('');
+    
+            $.ajax({
+                url: `/patient/transfer/request/received/list/${patientId}`,
+                method: 'GET',
+                cache: false,
+                success: function(data) {
+                    let tableHtml = '<table class="table table-bordered">';
+                    tableHtml += '<thead><tr><th>ID</th><th>From Provider</th><th>To Provider</th><th>Status</th><th>Action</th></tr></thead><tbody>';
+
+                    data.forEach(request => {
+                        tableHtml += '<tr>';
+                        tableHtml += `<td>${request.transfer_request_id}</td>`;
+                        tableHtml += `<td>${request.from_provider_name}</td>`;
+                        tableHtml += `<td>${request.to_provider_name}</td>`;
+                        tableHtml += `<td>${requestStatuses[request.request_status]}</td>`;
+                        
+                        if (request.request_status < 2) {
+                            tableHtml += `<td><button class="btn btn-success" id="approve-btn-${request.transfer_request_id}" onclick="approveTransfer(${request.transfer_request_id})">Approve</button></td>`;
+                        } else {
+                            tableHtml += `<td>Already Approved</td>`;
+                        }
+
+                        tableHtml += '</tr>';
+                    });
+
+                    tableHtml += '</tbody></table>';
+                    $('#received-requests-content').html(tableHtml);
+                },
+                error: function(xhr, status, error) {
+                    $('#received-requests-content').html('<div class="alert alert-danger">Failed to load data.</div>');
+                    console.error('Error fetching transfer requests:', error);
+                }
+            });
+        });
+    });
+
+    function approveTransfer(transferRequestId) {
+        $.ajax({
+            url: `/patient/transfer/request/approve/${transferRequestId}`,
+            method: 'POST',
+            success: function(response) {
+                $(`#approve-btn-${transferRequestId}`).text('Approved').attr('disabled', true);
+            },
+            error: function(xhr, status, error) {
+                console.error('Error approving transfer request:', error);
+            }
+        });
+    }
+</script>
+
+
 {% endblock %}

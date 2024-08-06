@@ -7,6 +7,7 @@ from email.mime.text import MIMEText
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 import requests
+import string
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -134,6 +135,11 @@ def find_patient_by_first_name(first_name, last_name, date_of_birth, house_numbe
             return patient
     
     return None
+
+def generate_strong_password(length=12):
+    characters = string.ascii_letters + string.digits + string.punctuation
+    password = ''.join(random.choices(characters, k=length))
+    return password
 
 @app.route('/')
 def index():
@@ -524,10 +530,14 @@ def patient_data_transfer_send(transfer_request_id):
     patient_id = transfer_request.get('patient_id')
 
     patient = patients_collection.find_one({'patient_id': patient_id}, {'_id': 0})
-    patient['patient_id'] = None
-    patient['user_id'] = None
+    user = users_collection.find_one({'user_id' : patient['user_id']}, {'_id': 0})
+    
+    patient['email_address'] = user['email_address']
+
+    del patient['patient_id']
+    del patient['user_id']
     patient['original_healthcare_provider_id'] = patient['healthcare_provider_id'] 
-    patient['healthcare_provider_id'] = None
+    del patient['healthcare_provider_id']
 
     if not patient:
         return jsonify({"error": "Patient not found"}), 404
@@ -541,7 +551,7 @@ def patient_data_transfer_send(transfer_request_id):
             else:
                 staff_name = "Unknown Staff"
             consultation['staff_name'] = staff_name
-            consultation['staff_id'] = None
+            del consultation['staff_id']
 
     healthcare_providers_list = get_global_healthcare_providers_details()
     request_from_healthcare_provider_id = transfer_request.get('request_from_healthcare_provider_id')
@@ -568,7 +578,7 @@ def patient_data_transfer_send(transfer_request_id):
 
 @app.route('/staff/patient/data/transfer/receive', methods=['POST'])
 def patient_data_transfer_receive():
-    data = request.json
+    patient_data = request.json
 
     last_patient = patients_collection.find_one(sort=[("patient_id", -1)])
     new_patient_id = last_patient['patient_id'] + 1 if last_patient else 1
@@ -576,10 +586,25 @@ def patient_data_transfer_receive():
     healthcare_provider = healthcare_provider_collection.find_one(sort=[("healthcare_provider_id", -1)])
     healthcare_provider_id = healthcare_provider['healthcare_provider_id'] if last_patient else 1
 
-    data.patient_id = new_patient_id
-    data.user_id = healthcare_provider_id
+    patient_data['patient_id'] = new_patient_id
+    patient_data['healthcare_provider_id'] = healthcare_provider_id
 
-    patients_collection.insert_one(data)
+    email_address = patient_data['email_address']
+    del patient_data['email_address']
+
+    last_user = users_collection.find_one(sort=[("user_id", -1)])
+    new_user_id = last_user['user_id'] + 1 if last_user else 1
+
+    users_collection.insert_one({
+        'user_id': new_user_id,
+        'email_address': email_address,
+        'password': generate_strong_password(),
+        'role': os.getenv('ROLE_PATIENT')
+    })
+
+    patient_data['user_id'] = new_user_id
+
+    patients_collection.insert_one(patient_data)
 
     return jsonify({"message": "Patient data received successfully"}), 200
 
