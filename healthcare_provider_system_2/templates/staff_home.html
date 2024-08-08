@@ -59,7 +59,7 @@
 
         <div class="tab-pane fade" id="patients-list" role="tabpanel" aria-labelledby="patients-list-tab">
             <div class="table-responsive mt-3">
-                <table class="table table-bordered">
+                <table class="table table-bordered" id="patients-list-table">
                     <thead>
                         <tr>
                             <th>First Name</th>
@@ -71,16 +71,6 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for patient in patients_info %}
-                            <tr data-toggle="modal" data-target="#patientDetailsModal_{{ loop.index }}">
-                                <td>{{ patient.first_name }}</td>
-                                <td>{{ patient.last_name }}</td>
-                                <td>{{ patient.date_of_birth }}</td>
-                                <td>{{ patient.age }}</td>
-                                <td>{{ patient.gender }}</td>
-                                <td>{{ patient.house_number_post_box_number }}, {{ patient.post_code }}, {{ patient.country }}</td>
-                            </tr>
-                        {% endfor %}
                     </tbody>                    
                 </table>
             </div>
@@ -140,105 +130,47 @@
     </div>
 </div>
 
-{% for patient in patients_info %}
-    <div class="modal fade" id="patientDetailsModal_{{ loop.index }}" tabindex="-1" role="dialog" aria-labelledby="patientDetailsModalLabel_{{ loop.index }}" aria-hidden="true">
-        <div class="modal-dialog custom-modal-width" role="document">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="patientDetailsModalLabel_{{ loop.index }}">Patient Medical Details - {{ patient.first_name }} {{ patient.last_name }}</h5>
-                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                        <span aria-hidden="true">&times;</span>
-                    </button>
+<div class="modal fade" id="patientDetailsModalTemplate" tabindex="-1" role="dialog" aria-labelledby="patientDetailsModalLabelTemplate" aria-hidden="true">
+    <div class="modal-dialog custom-modal-width" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="patientDetailsModalLabelTemplate"></h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+
+            <div class="modal-body">
+                <ul class="list-group" id="patientDetailsListTemplate">
+                </ul>
+
+                <div class="table-responsive mt-3">
+                    <table class="table table-bordered" id="consultationsTableTemplate">
+                        <thead>
+                            <tr>
+                                <th>Consultation Date</th>
+                                <th>Time</th>
+                                <th>Doctor Name</th>
+                                <th>Notes</th>
+                                <th>Diagnosis</th>
+                                <th>Procedure</th>
+                                <th>Medication</th>
+                                <th>Dosage</th>
+                                <th>Instructions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        </tbody>
+                    </table>
                 </div>
+            </div>
 
-                <div class="modal-body">
-                    <ul class="list-group">
-                        <li class="list-group-item"><strong>First Name:</strong> {{ patient.first_name }}</li>
-                        <li class="list-group-item"><strong>Last Name:</strong> {{ patient.last_name }}</li>
-                        <li class="list-group-item"><strong>Date Of Birth:</strong> {{ patient.date_of_birth }}</li>
-                        <li class="list-group-item"><strong>Age:</strong> {{ patient.age }}</li>
-                        <li class="list-group-item"><strong>Gender:</strong> {{ patient.gender }}</li>
-                        <li class="list-group-item"><strong>Address:</strong> {{ patient.house_number_post_box_number }}, {{ patient.post_code }}, {{ patient.country }}</li>
-                    </ul>
-
-                    {% if patient.consultation | length > 0 %}
-                        <div class="table-responsive mt-3">
-                            <table class="table table-bordered">
-                                <thead>
-                                    <tr>
-                                        <th>Consultation Date</th>
-                                        <th>Time</th>
-                                        <th>Doctor Name</th>
-                                        <th>Notes</th>
-                                        <th>Diagnosis</th>
-                                        <th>Procedure</th>
-                                        <th>Medication</th>
-                                        <th>Dosage</th>
-                                        <th>Instructions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for consultation in patient.consultation %}
-                                        <tr>
-                                            <td>{{ consultation.date }}</td>
-                                            <td>{{ consultation.time }}</td>
-                                            <td>{{ consultation.doctor_name }}</td>
-                                            <td>{{ consultation.notes }}</td>
-                                            <td>
-                                                {% for diag in patient.diagnosis %}
-                                                    {% if diag.consultation_id == consultation.consultation_id %}
-                                                        <div>{{ diag.diagnosis }}</div>
-                                                    {% endif %}
-                                                {% endfor %}
-                                            </td>
-                                            <td>
-                                                {% for diag in patient.diagnosis %}
-                                                    {% if diag.consultation_id == consultation.consultation_id %}
-                                                        <div>{{ diag.procedure }}</div>
-                                                    {% endif %}
-                                                {% endfor %}
-                                            </td>
-                                            <td>
-                                                {% for med in patient.medication %}
-                                                    {% if med.consultation_id == consultation.consultation_id %}
-                                                        <div>{{ med.name }}</div>
-                                                    {% endif %}
-                                                {% endfor %}
-                                            </td>
-                                            <td>
-                                                {% for med in patient.medication %}
-                                                    {% if med.consultation_id == consultation.consultation_id %}
-                                                        <div>{{ med.dosage }}</div>
-                                                    {% endif %}
-                                                {% endfor %}
-                                            </td>
-                                            <td>
-                                                {% for med in patient.medication %}
-                                                    {% if med.consultation_id == consultation.consultation_id %}
-                                                        <div>{{ med.instructions }}</div>
-                                                    {% endif %}
-                                                {% endfor %}
-                                            </td>
-                                        </tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
-                    {% else %}
-                        <div class="alert alert-info mt-3" role="alert">
-                            No consultations available.
-                        </div>
-                    {% endif %}
-                </div>
-
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-                </div>
-
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
             </div>
         </div>
     </div>
-{% endfor %}
+</div>
 
 <div class="modal fade" id="responseModal" tabindex="-1" role="dialog" aria-labelledby="responseModalLabel" aria-hidden="true">
     <div class="modal-dialog" role="document">
@@ -327,6 +259,28 @@
             });
         });
 
+        $('#patients-list-tab').on('click', function() {
+            $('#patients-list-table tbody').html('');
+
+            $.ajax({
+                url: '/staff/home/patients/list',
+                method: 'GET',
+                cache: false,
+                success: function(data) {
+                    let content = '';
+                    data.forEach((patient, index) => {
+                        const modalId = `patientDetailsModal_${index}`;
+                        content += `<tr data-toggle="modal" data-target="#${modalId}"><td>${patient.first_name}</td><td>${patient.last_name}</td><td>${patient.date_of_birth}</td><td>${patient.age}</td><td>${patient.gender}</td><td>${patient.house_number_post_box_number}, ${patient.post_code}, ${patient.country}</td></tr>`;
+                        createModal(patient, modalId);
+                    });
+                    $('#patients-list-table tbody').html(content);
+                },
+                error: function() {
+                    $('#patients-list-table tbody').html('<div class="alert alert-danger">Failed to load data.</div>');
+                }
+            });
+        });
+
         $('#transfer-request-sent-tab').on('click', function() {
             $('#sent-requests-content').html('');
 
@@ -377,6 +331,64 @@
             });
         });
     });
+
+    function createModal(patient, modalId) {
+        let modalTemplate = document.getElementById('patientDetailsModalTemplate').cloneNode(true);
+        modalTemplate.id = modalId;
+        modalTemplate.querySelector('.modal-title').innerText = `Patient Medical Details - ${patient.first_name} ${patient.last_name}`;
+        let detailsList = modalTemplate.querySelector('#patientDetailsListTemplate');
+        detailsList.id = '';
+        detailsList.innerHTML = `
+            <li class="list-group-item"><strong>First Name:</strong> ${patient.first_name}</li>
+            <li class="list-group-item"><strong>Last Name:</strong> ${patient.last_name}</li>
+            <li class="list-group-item"><strong>Date Of Birth:</strong> ${patient.date_of_birth}</li>
+            <li class="list-group-item"><strong>Age:</strong> ${patient.age}</li>
+            <li class="list-group-item"><strong>Gender:</strong> ${patient.gender}</li>
+            <li class="list-group-item"><strong>Address:</strong> ${patient.house_number_post_box_number}, ${patient.post_code}, ${patient.country}</li>
+        `;
+        let consultationsTable = modalTemplate.querySelector('#consultationsTableTemplate tbody');
+        consultationsTable.id = '';
+        if (patient.consultation.length > 0) {
+            patient.consultation.forEach(consultation => {
+                consultationsTable.innerHTML += `
+                    <tr>
+                        <td>${consultation.date}</td>
+                        <td>${consultation.time}</td>
+                        <td>${consultation.doctor_name}</td>
+                        <td>${consultation.notes}</td>
+                        <td>${getDiagnosis(patient.diagnosis, consultation.consultation_id)}</td>
+                        <td>${getProcedure(patient.diagnosis, consultation.consultation_id)}</td>
+                        <td>${getMedication(patient.medication, consultation.consultation_id)}</td>
+                        <td>${getDosage(patient.medication, consultation.consultation_id)}</td>
+                        <td>${getInstructions(patient.medication, consultation.consultation_id)}</td>
+                    </tr>
+                `;
+            });
+        } else {
+            consultationsTable.innerHTML = '<div class="alert alert-info mt-3" role="alert">No consultations available.</div>';
+        }
+        document.body.appendChild(modalTemplate);
+    }
+
+    function getDiagnosis(diagnosis, consultationId) {
+        return diagnosis.filter(d => d.consultation_id === consultationId).map(d => d.diagnosis).join('<br>');
+    }
+
+    function getProcedure(diagnosis, consultationId) {
+        return diagnosis.filter(d => d.consultation_id === consultationId).map(d => d.procedure).join('<br>');
+    }
+
+    function getMedication(medication, consultationId) {
+        return medication.filter(m => m.consultation_id === consultationId).map(m => m.name).join('<br>');
+    }
+
+    function getDosage(medication, consultationId) {
+        return medication.filter(m => m.consultation_id === consultationId).map(m => m.dosage).join('<br>');
+    }
+
+    function getInstructions(medication, consultationId) {
+        return medication.filter(m => m.consultation_id === consultationId).map(m => m.instructions).join('<br>');
+    }
 
     window.transferData = function(transferRequestId) {
         var button = document.getElementById(`transfer-btn-${transferRequestId}`);

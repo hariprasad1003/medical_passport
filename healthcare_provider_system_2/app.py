@@ -296,6 +296,37 @@ def patient_home():
 
     return render_template('patient_home.html', user_info=user_info, request_statuses=request_statuses)
 
+@app.route('/staff/home/patients/list', methods=['GET'])
+def get_patients():
+    patients = list(patients_collection.find({}, {'_id': 0}))
+    patients_info = []
+
+    for patient in patients:
+        consultations = patient.get('consultation', [])
+        for consultation in consultations:
+            staff_id = consultation.get('staff_id')
+            staff_member = staffs_collection.find_one({'staff_id': staff_id}, {'_id': 0})
+            if staff_member:
+                doctor_name = f"{staff_member['first_name']} {staff_member['last_name']}"
+                consultation['doctor_name'] = doctor_name
+
+        patient_info = {
+            'first_name': patient['first_name'],
+            'last_name': patient['last_name'],
+            'date_of_birth': format_date_of_birth(patient['date_of_birth']),
+            'age': patient['age'],
+            'gender': patient['gender'],
+            'house_number_post_box_number': patient['address']['house_number_post_box_number'],
+            'post_code': patient['address']['post_code'],
+            'country': patient['address']['country'],
+            'consultation': consultations,
+            'diagnosis': patient['diagnosis'],
+            'medication': patient['medication']
+        }
+        patients_info.append(patient_info)
+
+    return jsonify(patients_info), 200
+
 @app.route('/staff/home', methods=['GET'])
 def staff_home():
     email_address = session.get('email')
@@ -322,40 +353,10 @@ def staff_home():
         user_info['specialization'] = staff['specialization']
         user_info['consultation_hours'] = staff['consultation_hours']
 
-    patients = list(patients_collection.find({},{'_id': 0}))
-    patients_info = []
-
-    for patient in patients:
-        consultations = patient['consultation']
-
-        for consultation in consultations:
-            staff_id = consultation.get('staff_id')
-            staff_member = staffs_collection.find_one({'staff_id': staff_id}, {'_id': 0})
-
-            if staff_member:
-                doctor_name = f"{staff_member['first_name']} {staff_member['last_name']}"
-                consultation['doctor_name'] = doctor_name
-
-        patient_info = {
-            'first_name': patient['first_name'],
-            'last_name': patient['last_name'],
-            'date_of_birth': format_date_of_birth(patient['date_of_birth']),
-            'age': patient['age'],
-            'gender': patient['gender'],
-            'house_number_post_box_number': patient['address']['house_number_post_box_number'],
-            'post_code': patient['address']['post_code'],
-            'country': patient['address']['country'],
-            'consultation': consultations,
-            'diagnosis': patient['diagnosis'],
-            'medication': patient['medication']
-        }
-
-        patients_info.append(patient_info)
-
     healthcare_providers_list = get_global_healthcare_providers_details()
     global_healthcare_providers_details = get_healthcare_providers_list_based_on_country(healthcare_providers_list)
 
-    return render_template('staff_home.html', user_info=user_info, patients_info=patients_info, global_healthcare_providers_details=global_healthcare_providers_details, request_statuses=request_statuses)
+    return render_template('staff_home.html', user_info=user_info, global_healthcare_providers_details=global_healthcare_providers_details, request_statuses=request_statuses)
     
 @app.route('/staff/data/patient/transfer/request/sent', methods=['POST'])
 def patient_data_transfer_request_sent():
@@ -402,6 +403,7 @@ def patient_data_transfer_request_sent():
             healthcare_provider_url = f"{web_address.get('domain')}{web_address.get('request_endpoint')}"
 
     transfer_data_request_query = {
+        'from_transfer_request_id' : new_transfer_request_id,
         'healthcare_provider_id' : healthcare_provider_from_id,
         'first_name' : first_name,
         'last_name' : last_name,
@@ -427,6 +429,7 @@ def patient_data_transfer_request_sent():
 def patient_data_transfer_request_received():
     data = request.json
 
+    from_transfer_request_id = int(data.get('from_transfer_request_id'))
     country = data.get('country')
     healthcare_provider_from_id = int(data.get('healthcare_provider_id'))
     first_name = data.get('first_name')
@@ -445,6 +448,7 @@ def patient_data_transfer_request_received():
 
     transfer_request = {
         'transfer_request_id' : new_transfer_request_id,
+        'from_transfer_request_id' : from_transfer_request_id,
         'request_from_healthcare_provider_id' : healthcare_provider_from_id,
         'request_to_healthcare_provider_id' : health_provider_to_id,
         'request_type' : REQUEST_RECEIVED,
@@ -527,16 +531,17 @@ def patient_data_transfer_send(transfer_request_id):
     
     transfer_request = transfer_request_received_collection.find_one({'transfer_request_id': transfer_request_id}, {'_id': 0})
 
-    patient_id = transfer_request.get('patient_id')
+    patient_id = int(transfer_request.get('patient_id'))
+    from_transfer_request_id = int(transfer_request.get('from_transfer_request_id'))
 
     patient = patients_collection.find_one({'patient_id': patient_id}, {'_id': 0})
     user = users_collection.find_one({'user_id' : patient['user_id']}, {'_id': 0})
     
+    patient['from_transfer_request_id'] = from_transfer_request_id
     patient['email_address'] = user['email_address']
-
+    patient['original_healthcare_provider_id'] = patient['healthcare_provider_id'] 
     del patient['patient_id']
     del patient['user_id']
-    patient['original_healthcare_provider_id'] = patient['healthcare_provider_id'] 
     del patient['healthcare_provider_id']
 
     if not patient:
@@ -586,6 +591,8 @@ def patient_data_transfer_receive():
     healthcare_provider = healthcare_provider_collection.find_one(sort=[("healthcare_provider_id", -1)])
     healthcare_provider_id = healthcare_provider['healthcare_provider_id'] if last_patient else 1
 
+    from_transfer_request_id = patient_data['from_transfer_request_id']
+
     patient_data['patient_id'] = new_patient_id
     patient_data['healthcare_provider_id'] = healthcare_provider_id
 
@@ -605,6 +612,11 @@ def patient_data_transfer_receive():
     patient_data['user_id'] = new_user_id
 
     patients_collection.insert_one(patient_data)
+
+    transfer_request_sent_collection.update_one(
+        {'transfer_request_id': from_transfer_request_id},
+        {'$set': {'request_status': PATIENT_DATA_RECEIVED}}
+    )
 
     return jsonify({"message": "Patient data received successfully"}), 200
 
