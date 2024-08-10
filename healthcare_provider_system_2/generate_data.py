@@ -17,8 +17,8 @@ load_dotenv()
 
 healthcare_provider_id = 1
 
-user_roles = ['Patient', 'Staff']
-staff_roles = ['Doctor', 'Admin', 'Nurse']
+user_roles = [0, 1]
+staff_roles = [0, 1]
 
 consultation_hours_options = [
     "Mon-Fri 9AM-5PM",
@@ -31,28 +31,20 @@ consultation_hours_options = [
 specializations = ["Cardiology", "Endocrinology", "Orthopedics", "Neurology", "Oncology", "Nephrology", "Pulmonology", "Gastroenterology", "Allergy and Immunology", "General Practice (Family Medicine)"]
 
 qualifications = {
-    'Doctor': [
-        "MBBS",
-        "MD",
-        "DO",
-        "PhD in Medical Science",
-        "DM",
-        "FRCS"
-    ],
-    'Admin': [
+    0: [
         "MBA Healthcare",
         "BBA",
         "MHA (Master of Health Administration)",
         "BA in Business Administration",
         "Certification in Healthcare Management"
     ],
-    'Nurse': [
-        "BSc Nursing",
-        "MSc Nursing",
-        "Registered Nurse (RN)",
-        "Nurse Practitioner (NP)",
-        "Diploma in Nursing",
-        "Certified Nurse Midwife (CNM)"
+    1: [
+        "MBBS",
+        "MD",
+        "DO",
+        "PhD in Medical Science",
+        "DM",
+        "FRCS"
     ]
 }
 
@@ -94,18 +86,18 @@ def generate_email_and_phone_number(country):
     return email_address, phone_number    
 
 def generate_address(country):
-    house_number_post_box_number = None
+    house_number = None
     post_code = None
     
     if country == 'USA':
-        house_number_post_box_number = fake_us.building_number()
+        house_number = fake_us.building_number()
         post_code = fake_us.zipcode()
     elif country == 'UK':
-        house_number_post_box_number = fake_uk.building_number()
+        house_number = fake_uk.building_number()
         post_code = fake_uk.postcode()
     
     address = {
-        "house_number_post_box_number": house_number_post_box_number,
+        "house_number": house_number,
         "post_code": post_code,
         "country": country
     }
@@ -292,14 +284,14 @@ UK, USA
 '''
 
 iterations = 1
-country = 'UK'
+country = 'USA'
 
 def insert_json_to_mongodb(collection_name, json_data):
     client = MongoClient(os.getenv('MONGO_URI'))
     '''
     GLOBAL_DB_NAME, DB_NAME, DB_NAME_2
     '''
-    db = client[os.getenv('GLOBAL_DB_NAME')]
+    db = client[os.getenv('DB_NAME')]
     collection = db[collection_name]
     
     if isinstance(json_data, list):
@@ -338,4 +330,4 @@ patient
 '''
 
 collection_name = 'healthcare_provider'
-insert_json_to_mongodb(collection_name, healthcare_providers)
+insert_json_to_mongodb(collection_name, healthcare_provider)

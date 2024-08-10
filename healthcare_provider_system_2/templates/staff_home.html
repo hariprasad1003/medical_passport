@@ -49,7 +49,7 @@
                 <li class="list-group-item"><strong>Role:</strong> {{ user_info.role }}</li>
                 <li class="list-group-item"><strong>Years of Experience:</strong> {{ user_info.years_of_experience }}</li>
                 <li class="list-group-item"><strong>Qualifications:</strong> {{ user_info.qualifications }}</li>
-                <li class="list-group-item"><strong>Address:</strong> {{ user_info.house_number_post_box_number }}, {{ user_info.post_code }}, {{ user_info.country }}</li>
+                <li class="list-group-item"><strong>Address:</strong> {{ user_info.house_number }}, {{ user_info.post_code }}, {{ user_info.country }}</li>
                 {% if user_info.role == "Doctor"%}
                     <li class="list-group-item"><strong>Specialization:</strong> {{ user_info.specialization }}</li>
                     <li class="list-group-item"><strong>Consultation Hours:</strong> {{ user_info.consultation_hours }}</li>
@@ -270,7 +270,7 @@
                     let content = '';
                     data.forEach((patient, index) => {
                         const modalId = `patientDetailsModal_${index}`;
-                        content += `<tr data-toggle="modal" data-target="#${modalId}"><td>${patient.first_name}</td><td>${patient.last_name}</td><td>${patient.date_of_birth}</td><td>${patient.age}</td><td>${patient.gender}</td><td>${patient.house_number_post_box_number}, ${patient.post_code}, ${patient.country}</td></tr>`;
+                        content += `<tr data-toggle="modal" data-target="#${modalId}"><td>${patient.first_name}</td><td>${patient.last_name}</td><td>${patient.date_of_birth}</td><td>${patient.age}</td><td>${patient.gender}</td><td>${patient.house_number}, ${patient.post_code}, ${patient.country}</td></tr>`;
                         createModal(patient, modalId);
                     });
                     $('#patients-list-table tbody').html(content);
@@ -312,7 +312,7 @@
                 success: function(data) {
                     let content = '<div class="table-responsive mt-3"><table class="table table-bordered"><thead><tr><th>Transfer ID</th><th>From Provider</th><th>To Provider</th><th>Patient Name</th><th>Date of Birth</th><th>Address</th><th>Status</th><th>Action</th></tr></thead><tbody>';
                     data.forEach(request => {
-                        content += `<tr><td>${request.transfer_request_id}</td><td>${request.from_provider_name}</td><td>${request.to_provider_name}</td><td>${request.patient_info.first_name} ${request.patient_info.last_name}</td><td>${request.patient_info.date_of_birth}</td><td>${request.patient_info.address.house_number_post_box_number}, ${request.patient_info.address.post_code}, ${request.patient_info.address.country}</td><td>${requestStatuses[request.request_status]}</td>`;
+                        content += `<tr><td>${request.transfer_request_id}</td><td>${request.from_provider_name}</td><td>${request.to_provider_name}</td><td>${request.patient_info.first_name} ${request.patient_info.last_name}</td><td>${request.patient_info.date_of_birth}</td><td>${request.patient_info.address.house_number}, ${request.patient_info.address.post_code}, ${request.patient_info.address.country}</td><td>${requestStatuses[request.request_status]}</td>`;
 
                         if (request.request_status <= 2) {
                             content += `<td><button class="btn btn-primary" id="transfer-btn-${request.transfer_request_id}" onclick="transferData(${request.transfer_request_id})">Transfer Data</button></td>`;
@@ -344,7 +344,7 @@
             <li class="list-group-item"><strong>Date Of Birth:</strong> ${patient.date_of_birth}</li>
             <li class="list-group-item"><strong>Age:</strong> ${patient.age}</li>
             <li class="list-group-item"><strong>Gender:</strong> ${patient.gender}</li>
-            <li class="list-group-item"><strong>Address:</strong> ${patient.house_number_post_box_number}, ${patient.post_code}, ${patient.country}</li>
+            <li class="list-group-item"><strong>Address:</strong> ${patient.house_number}, ${patient.post_code}, ${patient.country}</li>
         `;
         let consultationsTable = modalTemplate.querySelector('#consultationsTableTemplate tbody');
         consultationsTable.id = '';

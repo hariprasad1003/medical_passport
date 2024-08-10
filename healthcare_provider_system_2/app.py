@@ -8,6 +8,7 @@ from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 import requests
 import string
+import aes_encryption
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -36,6 +37,11 @@ request_statuses = {
     PATIENT_DATA_TRANSFERRED: "Patient Data Transferred",
     PATIENT_DATA_RECEIVED: "Patient Data Received"
 }
+
+PATIENT=0
+STAFF=1
+ADMIN=0
+DOCTOR=1
 
 def generate_otp():
     return str(random.randint(100000, 999999))
@@ -93,6 +99,7 @@ def get_global_healthcare_providers_details():
         return {"error": str(e)}
 
 def get_healthcare_providers_list_based_on_country(healthcare_providers_list):
+    print(healthcare_providers_list)
     country_based_providers = {}
     for healthcare_provider in healthcare_providers_list:
         country = healthcare_provider['address']['country']
@@ -128,7 +135,7 @@ def find_patient_by_first_name(first_name, last_name, date_of_birth, house_numbe
         if (
             patient.get('last_name') == formatted_last_name and
             patient_dob_date == given_dob_date and
-            patient.get('address', {}).get('house_number_post_box_number') == house_number and
+            patient.get('address', {}).get('house_number') == house_number and
             patient_post_code == given_post_code and
             patient.get('address', {}).get('country') == country
         ):
@@ -151,7 +158,8 @@ def login():
         email_address = request.form['email_address']
         password = request.form['password']
 
-        user = users_collection.find_one({'email_address': email_address}, {'_id': 0})
+        user = users_collection.find_one({'email_address': email_address})
+        user = aes_encryption.decrypt_collection_document(user)
 
         if user and user['password'] == password:
             otp = generate_otp()
@@ -174,10 +182,10 @@ def register():
         last_name = request.form['last_name']
         date_of_birth = request.form['date_of_birth']
         gender = request.form['gender']
-        house_number_post_box_number = request.form['house_number_post_box_number']
+        house_number = request.form['house_number']
         post_code = request.form['post_code']
 
-        user = users_collection.find_one({'email_address': email_address}, {'_id': 0})
+        user = users_collection.find_one({'email_address': email_address})
         if user:
             error = 'User already registered. Please login.'
             return render_template('register.html', error=error)
@@ -189,16 +197,22 @@ def register():
         new_patient_id = last_patient['patient_id'] + 1 if last_patient else 1
 
         healthcare_provider = healthcare_provider_collection.find_one(sort=[("healthcare_provider_id", -1)])
+        healthcare_provider = aes_encryption.decrypt_collection_document(healthcare_provider)
         healthcare_provider_id = healthcare_provider['healthcare_provider_id'] if last_patient else 1
+        print(healthcare_provider)
 
-        users_collection.insert_one({
+        user = {
             'user_id': new_user_id,
             'email_address': email_address,
             'password': password,
-            'role': os.getenv('ROLE_PATIENT')
-        })
+            'role': PATIENT
+        }
+        user, encrypted_dek = aes_encryption.encrypt_collection_document(user)
+        result = users_collection.insert_one(user)
+        inserted_id = result.inserted_id
+        aes_encryption.insert_encryted_document_key(inserted_id, encrypted_dek)
 
-        patients_collection.insert_one({
+        patient = {
             'patient_id': new_patient_id,
             'user_id': new_user_id,
             'healthcare_provider_id': healthcare_provider_id,
@@ -206,16 +220,20 @@ def register():
             'last_name': last_name,
             'date_of_birth': date_of_birth,
             'gender': gender,
-            'age': calculate_age(date_of_birth),
+            'age': str(calculate_age(date_of_birth)),
             'address' : {
-                'house_number_post_box_number': house_number_post_box_number,
+                'house_number': house_number,
                 'post_code': post_code,
-                'country': healthcare_provider['country']
+                'country': healthcare_provider['address']['country']
             },
             'consultation': [],
             'diagnosis': [],
             'medication': []
-        })
+        }
+        patient, encrypted_dek = aes_encryption.encrypt_collection_document(patient)
+        result = patients_collection.insert_one(patient)
+        inserted_id = result.inserted_id
+        aes_encryption.insert_encryted_document_key(inserted_id, encrypted_dek)
 
         otp = generate_otp()
         session['otp'] = otp
@@ -248,13 +266,13 @@ def home():
     if not email_address:
         return redirect(url_for('login'))
 
-    user = users_collection.find_one({'email_address': email_address}, {'_id': 0})
+    user = users_collection.find_one({'email_address': email_address})
     if not user:
         return redirect(url_for('login'))
 
-    if user['role'] == 'Patient':
+    if user['role'] == PATIENT:
         return redirect(url_for('patient_home'))
-    elif user['role'] == 'Staff':
+    elif user['role'] == STAFF:
         return redirect(url_for('staff_home'))
     else:
         return redirect(url_for('login'))
@@ -262,16 +280,18 @@ def home():
 @app.route('/patient/home', methods=['GET'])
 def patient_home():
     email_address = session.get('email')
-    user = users_collection.find_one({'email_address': email_address}, {'_id': 0})
-    if not user or user['role'] != 'Patient':
+    user = users_collection.find_one({'email_address': email_address})
+    if not user or user['role'] != PATIENT:
         return redirect(url_for('login'))
 
     patient = patients_collection.find_one({'user_id': user['user_id']})
+    patient = aes_encryption.decrypt_collection_document(patient)
     consultations = patient['consultation']
 
     for consultation in consultations:
         staff_id = consultation.get('staff_id')
-        staff_member = staffs_collection.find_one({'staff_id': staff_id}, {'_id': 0})
+        staff_member = staffs_collection.find_one({'staff_id': staff_id})
+        staff_member = aes_encryption.decrypt_collection_document(staff_member)
 
         if staff_member:
             doctor_name = f"{staff_member['first_name']} {staff_member['last_name']}"
@@ -286,7 +306,7 @@ def patient_home():
         'date_of_birth': format_date_of_birth(patient['date_of_birth']),
         'age': patient['age'],
         'gender': patient['gender'],
-        'house_number_post_box_number': patient['address']['house_number_post_box_number'],
+        'house_number': patient['address']['house_number'],
         'post_code': patient['address']['post_code'],
         'country': patient['address']['country'],
         'consultation': consultations,
@@ -298,14 +318,16 @@ def patient_home():
 
 @app.route('/staff/home/patients/list', methods=['GET'])
 def get_patients():
-    patients = list(patients_collection.find({}, {'_id': 0}))
+    patients = list(patients_collection.find({}))
     patients_info = []
 
     for patient in patients:
+        patient = aes_encryption.decrypt_collection_document(patient)
         consultations = patient.get('consultation', [])
         for consultation in consultations:
             staff_id = consultation.get('staff_id')
-            staff_member = staffs_collection.find_one({'staff_id': staff_id}, {'_id': 0})
+            staff_member = staffs_collection.find_one({'staff_id': staff_id})
+            staff_member = aes_encryption.decrypt_collection_document(staff_member)
             if staff_member:
                 doctor_name = f"{staff_member['first_name']} {staff_member['last_name']}"
                 consultation['doctor_name'] = doctor_name
@@ -316,7 +338,7 @@ def get_patients():
             'date_of_birth': format_date_of_birth(patient['date_of_birth']),
             'age': patient['age'],
             'gender': patient['gender'],
-            'house_number_post_box_number': patient['address']['house_number_post_box_number'],
+            'house_number': patient['address']['house_number'],
             'post_code': patient['address']['post_code'],
             'country': patient['address']['country'],
             'consultation': consultations,
@@ -330,11 +352,12 @@ def get_patients():
 @app.route('/staff/home', methods=['GET'])
 def staff_home():
     email_address = session.get('email')
-    user = users_collection.find_one({'email_address': email_address}, {'_id': 0})
-    if not user or user['role'] != 'Staff':
+    user = users_collection.find_one({'email_address': email_address})
+    if not user or user['role'] != STAFF:
         return redirect(url_for('login'))
 
-    staff = staffs_collection.find_one({'user_id': user['user_id']}, {'_id': 0})
+    staff = staffs_collection.find_one({'user_id': user['user_id']})
+    staff = aes_encryption.decrypt_collection_document(staff)
     role = staff['role']
     user_info = {
         'email_address': user['email_address'],
@@ -342,14 +365,14 @@ def staff_home():
         'first_name': staff['first_name'],
         'last_name': staff['last_name'],
         'role': role,
-        'house_number_post_box_number': staff['address']['house_number_post_box_number'],
+        'house_number': staff['address']['house_number'],
         'post_code': staff['address']['post_code'],
         'country': staff['address']['country'],
         'years_of_experience': staff['years_of_experience'],
         'qualifications': staff['qualifications']
     }
 
-    if role == 'Doctor':
+    if role == DOCTOR:
         user_info['specialization'] = staff['specialization']
         user_info['consultation_hours'] = staff['consultation_hours']
 
@@ -421,7 +444,10 @@ def patient_data_transfer_request_sent():
         print(f'Failed to sent request: {response.status_code}')
         print(response.text)
 
-    transfer_request_sent_collection.insert_one(transfer_request)
+    transfer_request, encrypted_dek = aes_encryption.encrypt_collection_document(transfer_request)
+    result = transfer_request_sent_collection.insert_one(transfer_request)
+    inserted_id = result.inserted_id
+    aes_encryption.insert_encryted_document_key(inserted_id, encrypted_dek)
 
     return jsonify({"message": "Request sent successfully"}), 200
 
@@ -463,9 +489,10 @@ def patient_data_transfer_request_received():
 @app.route('/staff/transfer/request/sent/list', methods=['GET'])
 def patient_data_transfer_request_sent_list():
 
-    transfer_requests_sent = list(transfer_request_sent_collection.find({},{'_id': 0}))
+    transfer_requests_sent = list(transfer_request_sent_collection.find({}))
 
     for request in transfer_requests_sent:
+        request = aes_encryption.decrypt_collection_document(request)
         request['patient_info']['date_of_birth'] = format_date_of_birth(request['patient_info']['date_of_birth'])
         request['from_provider_name'] = get_provider_name(request['request_from_healthcare_provider_id'])
         request['to_provider_name'] = get_provider_name(request['request_to_healthcare_provider_id'])
@@ -475,10 +502,11 @@ def patient_data_transfer_request_sent_list():
 @app.route('/staff/transfer/request/received/list', methods=['GET'])
 def patient_data_transfer_request_received_list():
 
-    transfer_requests_received = list(transfer_request_received_collection.find({},{'_id': 0}))
+    transfer_requests_received = list(transfer_request_received_collection.find({}))
 
     for request in transfer_requests_received:
         patient = patients_collection.find_one({'patient_id': request['patient_id']})
+        patient = aes_encryption.decrypt_collection_document(patient)
         request['patient_info'] = {
             'first_name' : patient.get('first_name'),
             'last_name' : patient.get('last_name'),
@@ -493,7 +521,7 @@ def patient_data_transfer_request_received_list():
 @app.route('/patient/transfer/request/received/list/<patient_id>', methods=['GET'])
 def patient_data_transfer_request_received_list_endpoint_for_patient(patient_id):
 
-    transfer_requests_received = list(transfer_request_received_collection.find({'patient_id': int(patient_id)},{'_id': 0}))
+    transfer_requests_received = list(transfer_request_received_collection.find({'patient_id': int(patient_id)}))
 
     for request in transfer_requests_received:
         request['from_provider_name'] = get_provider_name(request['request_from_healthcare_provider_id'])
@@ -529,14 +557,16 @@ def patient_data_transfer_send(transfer_request_id):
     if transfer_request_id is None:
         return jsonify({"error": "Invalid Request Id"}), 400
     
-    transfer_request = transfer_request_received_collection.find_one({'transfer_request_id': transfer_request_id}, {'_id': 0})
+    transfer_request = transfer_request_received_collection.find_one({'transfer_request_id': transfer_request_id})
 
     patient_id = int(transfer_request.get('patient_id'))
     from_transfer_request_id = int(transfer_request.get('from_transfer_request_id'))
 
-    patient = patients_collection.find_one({'patient_id': patient_id}, {'_id': 0})
-    user = users_collection.find_one({'user_id' : patient['user_id']}, {'_id': 0})
-    
+    patient = patients_collection.find_one({'patient_id': patient_id})
+    patient = aes_encryption.decrypt_collection_document(patient)
+    user = users_collection.find_one({'user_id' : patient['user_id']})
+    user = aes_encryption.decrypt_collection_document(user)
+
     patient['from_transfer_request_id'] = from_transfer_request_id
     patient['email_address'] = user['email_address']
     patient['original_healthcare_provider_id'] = patient['healthcare_provider_id'] 
@@ -602,16 +632,23 @@ def patient_data_transfer_receive():
     last_user = users_collection.find_one(sort=[("user_id", -1)])
     new_user_id = last_user['user_id'] + 1 if last_user else 1
 
-    users_collection.insert_one({
+    user = {
         'user_id': new_user_id,
         'email_address': email_address,
         'password': generate_strong_password(),
-        'role': os.getenv('ROLE_PATIENT')
-    })
+        'role': PATIENT
+    }
+    user, encrypted_dek = aes_encryption.encrypt_collection_document(user)
+    result = users_collection.insert_one(user)
+    inserted_id = result.inserted_id
+    aes_encryption.insert_encryted_document_key(inserted_id, encrypted_dek)
 
     patient_data['user_id'] = new_user_id
 
-    patients_collection.insert_one(patient_data)
+    patient_data, encrypted_dek = aes_encryption.encrypt_collection_document(patient_data)
+    result = patients_collection.insert_one(patient_data)
+    inserted_id = result.inserted_id
+    aes_encryption.insert_encryted_document_key(inserted_id, encrypted_dek)
 
     transfer_request_sent_collection.update_one(
         {'transfer_request_id': from_transfer_request_id},
