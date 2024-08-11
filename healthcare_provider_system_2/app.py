@@ -4,16 +4,28 @@ import smtplib
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 import requests
 import string
 import aes_encryption
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+import jwt
+from functools import wraps
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["5 per minute", "50 per hour"]
+)
+limiter.init_app(app)
+
 load_dotenv()
+
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY')
 
 client = MongoClient(os.getenv('MONGO_URI'))
 db = client[os.getenv('DB_NAME')]
@@ -99,7 +111,6 @@ def get_global_healthcare_providers_details():
         return {"error": str(e)}
 
 def get_healthcare_providers_list_based_on_country(healthcare_providers_list):
-    print(healthcare_providers_list)
     country_based_providers = {}
     for healthcare_provider in healthcare_providers_list:
         country = healthcare_provider['address']['country']
@@ -112,9 +123,10 @@ def find_patient_by_first_name(first_name, last_name, date_of_birth, house_numbe
     formatted_first_name = first_name.title()
     formatted_last_name = last_name.title()
     
-    patients_with_same_first_name = patients_collection.find({'first_name': formatted_first_name})
+    patients = patients_collection.find()
     
-    for patient in patients_with_same_first_name:
+    for patient in patients:
+        patient = aes_encryption.decrypt_collection_document(patient)
         patient_dob = patient.get('date_of_birth')
         if patient_dob:
             try:
@@ -133,6 +145,7 @@ def find_patient_by_first_name(first_name, last_name, date_of_birth, house_numbe
         given_post_code = post_code.replace(' ', '')
         
         if (
+            patient.get('first_name') == formatted_first_name and
             patient.get('last_name') == formatted_last_name and
             patient_dob_date == given_dob_date and
             patient.get('address', {}).get('house_number') == house_number and
@@ -147,6 +160,63 @@ def generate_strong_password(length=12):
     characters = string.ascii_letters + string.digits + string.punctuation
     password = ''.join(random.choices(characters, k=length))
     return password
+
+def create_token(email_address):
+    token = jwt.encode({
+        'email_address': email_address,
+        'exp': datetime.utcnow() + timedelta(minutes=30)
+    }, app.config['JWT_SECRET_KEY'], algorithm='HS256')
+    return token
+
+def token_required_internal_call(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+
+        token_from_request = request.headers.get('Authorization')
+        token_from_session = None
+
+        if not token_from_request:
+            token_from_session = session.get('access_token')
+
+        if not token_from_request and not token_from_session:
+            return jsonify({'message': 'Token is missing!'}), 403
+
+        try:
+            if token_from_request:
+                token_from_request = token_from_request.split(" ")[1]
+                data = jwt.decode(token_from_request, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+            elif token_from_session:
+                data = jwt.decode(token_from_session, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+        except jwt.ExpiredSignatureError:
+            return jsonify({'message': 'Token has expired!'}), 403
+        except jwt.InvalidTokenError:
+            return jsonify({'message': 'Invalid token!'}), 403
+
+        return f(*args, **kwargs)
+
+    return decorated
+
+def token_required_external_call(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+
+        token_from_request = request.headers.get('Authorization')
+
+        if not token_from_request:
+            return jsonify({'message': 'Token is missing!'}), 403
+
+        try:
+            token_from_request = token_from_request.split(" ")[1]
+            data = jwt.decode(token_from_request, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+            email_address = data['email_address']
+        except jwt.ExpiredSignatureError:
+            return jsonify({'message': 'Token has expired!'}), 403
+        except jwt.InvalidTokenError:
+            return jsonify({'message': 'Invalid token!'}), 403
+
+        return f(email_address, *args, **kwargs)
+
+    return decorated
 
 @app.route('/')
 def index():
@@ -164,6 +234,8 @@ def login():
         if user and user['password'] == password:
             otp = generate_otp()
             session['otp'] = otp
+            access_token = create_token(email_address)
+            session['access_token'] = access_token
             session['email'] = email_address
             session['role'] = user['role']
             send_otp_email(otp, email_address)
@@ -199,7 +271,6 @@ def register():
         healthcare_provider = healthcare_provider_collection.find_one(sort=[("healthcare_provider_id", -1)])
         healthcare_provider = aes_encryption.decrypt_collection_document(healthcare_provider)
         healthcare_provider_id = healthcare_provider['healthcare_provider_id'] if last_patient else 1
-        print(healthcare_provider)
 
         user = {
             'user_id': new_user_id,
@@ -237,6 +308,8 @@ def register():
 
         otp = generate_otp()
         session['otp'] = otp
+        access_token = create_token(email_address)
+        session['access_token'] = access_token
         session['email'] = email_address
         send_otp_email(otp, email_address)
 
@@ -278,6 +351,7 @@ def home():
         return redirect(url_for('login'))
 
 @app.route('/patient/home', methods=['GET'])
+@token_required_internal_call
 def patient_home():
     email_address = session.get('email')
     user = users_collection.find_one({'email_address': email_address})
@@ -314,9 +388,43 @@ def patient_home():
         'medication': patient['medication']
     }
 
-    return render_template('patient_home.html', user_info=user_info, request_statuses=request_statuses)
+    return render_template('patient_home.html', user_info=user_info, access_token=session.get('access_token'), request_statuses=request_statuses)
 
-@app.route('/staff/home/patients/list', methods=['GET'])
+@app.route('/staff/home', methods=['GET'])
+@token_required_internal_call
+def staff_home():
+    email_address = session.get('email')
+    user = users_collection.find_one({'email_address': email_address})
+    if not user or user['role'] != STAFF:
+        return redirect(url_for('login'))
+
+    staff = staffs_collection.find_one({'user_id': user['user_id']})
+    staff = aes_encryption.decrypt_collection_document(staff)
+    role = staff['role']
+    user_info = {
+        'email_address': user['email_address'],
+        'role': user['role'],
+        'first_name': staff['first_name'],
+        'last_name': staff['last_name'],
+        'role': role,
+        'house_number': staff['address']['house_number'],
+        'post_code': staff['address']['post_code'],
+        'country': staff['address']['country'],
+        'years_of_experience': staff['years_of_experience'],
+        'qualifications': staff['qualifications']
+    }
+
+    if role == DOCTOR:
+        user_info['specialization'] = staff['specialization']
+        user_info['consultation_hours'] = staff['consultation_hours']
+
+    healthcare_providers_list = get_global_healthcare_providers_details()
+    global_healthcare_providers_details = get_healthcare_providers_list_based_on_country(healthcare_providers_list)
+
+    return render_template('staff_home.html', user_info=user_info, access_token=session.get('access_token'),global_healthcare_providers_details=global_healthcare_providers_details, request_statuses=request_statuses)
+
+@app.route('/api/staff/home/patients/list', methods=['GET'])
+@token_required_internal_call
 def get_patients():
     patients = list(patients_collection.find({}))
     patients_info = []
@@ -349,39 +457,8 @@ def get_patients():
 
     return jsonify(patients_info), 200
 
-@app.route('/staff/home', methods=['GET'])
-def staff_home():
-    email_address = session.get('email')
-    user = users_collection.find_one({'email_address': email_address})
-    if not user or user['role'] != STAFF:
-        return redirect(url_for('login'))
-
-    staff = staffs_collection.find_one({'user_id': user['user_id']})
-    staff = aes_encryption.decrypt_collection_document(staff)
-    role = staff['role']
-    user_info = {
-        'email_address': user['email_address'],
-        'role': user['role'],
-        'first_name': staff['first_name'],
-        'last_name': staff['last_name'],
-        'role': role,
-        'house_number': staff['address']['house_number'],
-        'post_code': staff['address']['post_code'],
-        'country': staff['address']['country'],
-        'years_of_experience': staff['years_of_experience'],
-        'qualifications': staff['qualifications']
-    }
-
-    if role == DOCTOR:
-        user_info['specialization'] = staff['specialization']
-        user_info['consultation_hours'] = staff['consultation_hours']
-
-    healthcare_providers_list = get_global_healthcare_providers_details()
-    global_healthcare_providers_details = get_healthcare_providers_list_based_on_country(healthcare_providers_list)
-
-    return render_template('staff_home.html', user_info=user_info, global_healthcare_providers_details=global_healthcare_providers_details, request_statuses=request_statuses)
-    
-@app.route('/staff/data/patient/transfer/request/sent', methods=['POST'])
+@app.route('/api/staff/data/patient/transfer/request/sent', methods=['POST'])
+@token_required_internal_call
 def patient_data_transfer_request_sent():
     data = request.json
 
@@ -451,7 +528,7 @@ def patient_data_transfer_request_sent():
 
     return jsonify({"message": "Request sent successfully"}), 200
 
-@app.route('/staff/data/patient/transfer/request/received', methods=['POST'])
+@app.route('/api/staff/data/patient/transfer/request/received', methods=['POST'])
 def patient_data_transfer_request_received():
     data = request.json
 
@@ -486,27 +563,34 @@ def patient_data_transfer_request_received():
 
     return jsonify({"message": "Request received successfully"}), 200
 
-@app.route('/staff/transfer/request/sent/list', methods=['GET'])
+@app.route('/api/staff/transfer/request/sent/list', methods=['GET'])
+@token_required_internal_call
 def patient_data_transfer_request_sent_list():
 
     transfer_requests_sent = list(transfer_request_sent_collection.find({}))
 
+    sanitized_requests = []
     for request in transfer_requests_sent:
         request = aes_encryption.decrypt_collection_document(request)
+        del request['_id']
         request['patient_info']['date_of_birth'] = format_date_of_birth(request['patient_info']['date_of_birth'])
         request['from_provider_name'] = get_provider_name(request['request_from_healthcare_provider_id'])
         request['to_provider_name'] = get_provider_name(request['request_to_healthcare_provider_id'])
+        sanitized_requests.append(request)
 
-    return jsonify(transfer_requests_sent), 200
+    return jsonify(sanitized_requests), 200
 
-@app.route('/staff/transfer/request/received/list', methods=['GET'])
+@app.route('/api/staff/transfer/request/received/list', methods=['GET'])
+@token_required_internal_call
 def patient_data_transfer_request_received_list():
 
     transfer_requests_received = list(transfer_request_received_collection.find({}))
 
+    sanitized_requests = []
     for request in transfer_requests_received:
         patient = patients_collection.find_one({'patient_id': request['patient_id']})
         patient = aes_encryption.decrypt_collection_document(patient)
+        del request['_id']
         request['patient_info'] = {
             'first_name' : patient.get('first_name'),
             'last_name' : patient.get('last_name'),
@@ -515,21 +599,27 @@ def patient_data_transfer_request_received_list():
         }
         request['from_provider_name'] = get_provider_name(request['request_from_healthcare_provider_id'])
         request['to_provider_name'] = get_provider_name(request['request_to_healthcare_provider_id'])
+        sanitized_requests.append(request)
 
-    return jsonify(transfer_requests_received), 200
+    return jsonify(sanitized_requests), 200
 
-@app.route('/patient/transfer/request/received/list/<patient_id>', methods=['GET'])
+@app.route('/api/patient/transfer/request/received/list/<patient_id>', methods=['GET'])
+@token_required_internal_call
 def patient_data_transfer_request_received_list_endpoint_for_patient(patient_id):
 
     transfer_requests_received = list(transfer_request_received_collection.find({'patient_id': int(patient_id)}))
 
+    sanitized_requests = []
     for request in transfer_requests_received:
         request['from_provider_name'] = get_provider_name(request['request_from_healthcare_provider_id'])
         request['to_provider_name'] = get_provider_name(request['request_to_healthcare_provider_id'])
+        del request['_id']
+        sanitized_requests.append(request)
 
-    return jsonify(transfer_requests_received), 200
+    return jsonify(sanitized_requests), 200
 
-@app.route('/patient/transfer/request/approve/<transfer_request_id>', methods=['POST'])
+@app.route('/api/patient/transfer/request/approve/<transfer_request_id>', methods=['POST'])
+@token_required_internal_call
 def patient_transfer_request_approve(transfer_request_id):
 
     transfer_request_id = int(transfer_request_id)
@@ -549,7 +639,8 @@ def patient_transfer_request_approve(transfer_request_id):
     
     return jsonify({"message": "Request approved successfully"}), 200
 
-@app.route('/staff/patient/data/transfer/send/<transfer_request_id>', methods=['GET'])
+@app.route('/api/staff/patient/data/transfer/send/<transfer_request_id>', methods=['GET'])
+@token_required_internal_call
 def patient_data_transfer_send(transfer_request_id):
 
     transfer_request_id = int(transfer_request_id)
@@ -570,6 +661,7 @@ def patient_data_transfer_send(transfer_request_id):
     patient['from_transfer_request_id'] = from_transfer_request_id
     patient['email_address'] = user['email_address']
     patient['original_healthcare_provider_id'] = patient['healthcare_provider_id'] 
+    del patient['_id']
     del patient['patient_id']
     del patient['user_id']
     del patient['healthcare_provider_id']
@@ -611,7 +703,7 @@ def patient_data_transfer_send(transfer_request_id):
     )
     return jsonify({"message": "Patient data sent successfully", "data": patient}), 200
 
-@app.route('/staff/patient/data/transfer/receive', methods=['POST'])
+@app.route('/api/staff/patient/data/transfer/receive', methods=['POST'])
 def patient_data_transfer_receive():
     patient_data = request.json
 

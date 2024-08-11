@@ -4,8 +4,16 @@ from dotenv import load_dotenv
 import os
 from urllib.parse import urlparse
 import aes_encryption
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["5 per minute", "50 per hour"]
+)
+limiter.init_app(app)
 
 load_dotenv()
 

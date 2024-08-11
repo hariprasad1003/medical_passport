@@ -128,36 +128,47 @@
         
         var patientId = {{ user_info.patient_id }};
         var requestStatuses = {{ request_statuses | tojson }};
+        var accessToken = "{{ access_token }}";
+        if (accessToken) {
+            sessionStorage.setItem('access_token', accessToken);
+        }
 
         $('#transfer-request-tab').on('click', function() {
             $('#received-requests-content').html('');
-    
+
             $.ajax({
-                url: `/patient/transfer/request/received/list/${patientId}`,
+                url: `/api/patient/transfer/request/received/list/${patientId}`,
                 method: 'GET',
+                headers: {
+                    'Authorization': 'Bearer ' + sessionStorage.getItem('access_token')
+                },
                 cache: false,
                 success: function(data) {
-                    let tableHtml = '<table class="table table-bordered">';
-                    tableHtml += '<thead><tr><th>ID</th><th>From Provider</th><th>To Provider</th><th>Status</th><th>Action</th></tr></thead><tbody>';
+                    if (data.length === 0) {
+                        $('#received-requests-content').html('<div class="alert alert-info mt-3" role="alert">No transfer requests available.</div>');
+                    } else {
+                        let tableHtml = '<table class="table table-bordered">';
+                        tableHtml += '<thead><tr><th>ID</th><th>From Provider</th><th>To Provider</th><th>Status</th><th>Action</th></tr></thead><tbody>';
 
-                    data.forEach(request => {
-                        tableHtml += '<tr>';
-                        tableHtml += `<td>${request.transfer_request_id}</td>`;
-                        tableHtml += `<td>${request.from_provider_name}</td>`;
-                        tableHtml += `<td>${request.to_provider_name}</td>`;
-                        tableHtml += `<td>${requestStatuses[request.request_status]}</td>`;
-                        
-                        if (request.request_status < 2) {
-                            tableHtml += `<td><button class="btn btn-success" id="approve-btn-${request.transfer_request_id}" onclick="approveTransfer(${request.transfer_request_id})">Approve</button></td>`;
-                        } else {
-                            tableHtml += `<td>Already Approved</td>`;
-                        }
+                        data.forEach(request => {
+                            tableHtml += '<tr>';
+                            tableHtml += `<td>${request.transfer_request_id}</td>`;
+                            tableHtml += `<td>${request.from_provider_name}</td>`;
+                            tableHtml += `<td>${request.to_provider_name}</td>`;
+                            tableHtml += `<td>${requestStatuses[request.request_status]}</td>`;
+                            
+                            if (request.request_status < 2) {
+                                tableHtml += `<td><button class="btn btn-success" id="approve-btn-${request.transfer_request_id}" onclick="approveTransfer(${request.transfer_request_id})">Approve</button></td>`;
+                            } else {
+                                tableHtml += `<td>Already Approved</td>`;
+                            }
 
-                        tableHtml += '</tr>';
-                    });
+                            tableHtml += '</tr>';
+                        });
 
-                    tableHtml += '</tbody></table>';
-                    $('#received-requests-content').html(tableHtml);
+                        tableHtml += '</tbody></table>';
+                        $('#received-requests-content').html(tableHtml);
+                    }
                 },
                 error: function(xhr, status, error) {
                     $('#received-requests-content').html('<div class="alert alert-danger">Failed to load data.</div>');
@@ -169,8 +180,11 @@
 
     function approveTransfer(transferRequestId) {
         $.ajax({
-            url: `/patient/transfer/request/approve/${transferRequestId}`,
+            url: `/api/patient/transfer/request/approve/${transferRequestId}`,
             method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + sessionStorage.getItem('access_token')
+            },
             success: function(response) {
                 $(`#approve-btn-${transferRequestId}`).text('Approved').attr('disabled', true);
             },

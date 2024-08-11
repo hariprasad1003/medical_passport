@@ -200,6 +200,11 @@
         var globalHealthcareProviders = {{ global_healthcare_providers_details | tojson }};
         var requestStatuses = {{ request_statuses | tojson }};
 
+        var accessToken = "{{access_token}}";
+        if (accessToken) {
+            sessionStorage.setItem('access_token', accessToken);
+        }
+
         countrySelect.addEventListener('change', function () {
             var selectedCountry = this.value;
             providerSelect.innerHTML = '';
@@ -229,7 +234,7 @@
             formData.forEach((value, key) => data[key] = value);
 
             $.ajax({
-                url: '/staff/data/patient/transfer/request/sent',
+                url: '/api/staff/data/patient/transfer/request/sent',
                 type: 'POST',
                 contentType: 'application/json',
                 data: JSON.stringify(data),
@@ -264,8 +269,11 @@
             $('#patients-list-table tbody').html('');
 
             $.ajax({
-                url: '/staff/home/patients/list',
+                url: '/api/staff/home/patients/list',
                 method: 'GET',
+                headers: {
+                    'Authorization': 'Bearer ' + sessionStorage.getItem('access_token')
+                },
                 cache: false,
                 success: function(data) {
                     let content = '';
@@ -286,16 +294,23 @@
             $('#sent-requests-content').html('');
 
             $.ajax({
-                url: '/staff/transfer/request/sent/list',
+                url: '/api/staff/transfer/request/sent/list',
                 method: 'GET',
+                headers: {
+                    'Authorization': 'Bearer ' + sessionStorage.getItem('access_token')
+                },
                 cache: false,
                 success: function(data) {
-                    let content = '<div class="table-responsive mt-3"><table class="table table-bordered"><thead><tr><th>Transfer ID</th><th>From Provider</th><th>To Provider</th><th>Patient Name</th><th>Date of Birth</th><th>Address</th><th>Status</th></tr></thead><tbody>';
-                    data.forEach(request => {
-                        content += `<tr><td>${request.transfer_request_id}</td><td>${request.from_provider_name}</td><td>${request.to_provider_name}</td><td>${request.patient_info.first_name} ${request.patient_info.last_name}</td><td>${request.patient_info.date_of_birth}</td><td>${request.patient_info.address.house_number}, ${request.patient_info.address.post_code}, ${request.patient_info.address.country}</td><td>${requestStatuses[request.request_status]}</td></tr>`;
-                    });
-                    content += '</tbody></table></div>';
-                    $('#sent-requests-content').html(content);
+                    if (data.length === 0) {
+                        $('#sent-requests-content').html('<div class="alert alert-info mt-3" role="alert">No transfer requests sent.</div>');
+                    } else {
+                        let content = '<div class="table-responsive mt-3"><table class="table table-bordered"><thead><tr><th>Transfer ID</th><th>From Provider</th><th>To Provider</th><th>Patient Name</th><th>Date of Birth</th><th>Address</th><th>Status</th></tr></thead><tbody>';
+                        data.forEach(request => {
+                            content += `<tr><td>${request.transfer_request_id}</td><td>${request.from_provider_name}</td><td>${request.to_provider_name}</td><td>${request.patient_info.first_name} ${request.patient_info.last_name}</td><td>${request.patient_info.date_of_birth}</td><td>${request.patient_info.address.house_number}, ${request.patient_info.address.post_code}, ${request.patient_info.address.country}</td><td>${requestStatuses[request.request_status]}</td></tr>`;
+                        });
+                        content += '</tbody></table></div>';
+                        $('#sent-requests-content').html(content);
+                    }
                 },
                 error: function() {
                     $('#sent-requests-content').html('<div class="alert alert-danger">Failed to load data.</div>');
@@ -307,24 +322,31 @@
             $('#received-requests-content').html('');
 
             $.ajax({
-                url: '/staff/transfer/request/received/list',
+                url: '/api/staff/transfer/request/received/list',
                 method: 'GET',
+                headers: {
+                    'Authorization': 'Bearer ' + sessionStorage.getItem('access_token')
+                },
                 cache: false,
                 success: function(data) {
-                    let content = '<div class="table-responsive mt-3"><table class="table table-bordered"><thead><tr><th>Transfer ID</th><th>From Provider</th><th>To Provider</th><th>Patient Name</th><th>Date of Birth</th><th>Address</th><th>Status</th><th>Action</th></tr></thead><tbody>';
-                    data.forEach(request => {
-                        content += `<tr><td>${request.transfer_request_id}</td><td>${request.from_provider_name}</td><td>${request.to_provider_name}</td><td>${request.patient_info.first_name} ${request.patient_info.last_name}</td><td>${request.patient_info.date_of_birth}</td><td>${request.patient_info.address.house_number}, ${request.patient_info.address.post_code}, ${request.patient_info.address.country}</td><td>${requestStatuses[request.request_status]}</td>`;
+                    if (data.length === 0) {
+                        $('#received-requests-content').html('<div class="alert alert-info mt-3" role="alert">No transfer requests received.</div>');
+                    } else {
+                        let content = '<div class="table-responsive mt-3"><table class="table table-bordered"><thead><tr><th>Transfer ID</th><th>From Provider</th><th>To Provider</th><th>Patient Name</th><th>Date of Birth</th><th>Address</th><th>Status</th><th>Action</th></tr></thead><tbody>';
+                        data.forEach(request => {
+                            content += `<tr><td>${request.transfer_request_id}</td><td>${request.from_provider_name}</td><td>${request.to_provider_name}</td><td>${request.patient_info.first_name} ${request.patient_info.last_name}</td><td>${request.patient_info.date_of_birth}</td><td>${request.patient_info.address.house_number}, ${request.patient_info.address.post_code}, ${request.patient_info.address.country}</td><td>${requestStatuses[request.request_status]}</td>`;
 
-                        if (request.request_status <= 2) {
-                            content += `<td><button class="btn btn-primary" id="transfer-btn-${request.transfer_request_id}" onclick="transferData(${request.transfer_request_id})">Transfer Data</button></td>`;
-                        } else {
-                            content += `<td>Transfer Complete</td>`;
-                        }
+                            if (request.request_status <= 2) {
+                                content += `<td><button class="btn btn-primary" id="transfer-btn-${request.transfer_request_id}" onclick="transferData(${request.transfer_request_id})">Transfer Data</button></td>`;
+                            } else {
+                                content += `<td>Transfer Complete</td>`;
+                            }
 
-                        content += `</tr>`;
-                    });
-                    content += '</tbody></table></div>';
-                    $('#received-requests-content').html(content);
+                            content += `</tr>`;
+                        });
+                        content += '</tbody></table></div>';
+                        $('#received-requests-content').html(content);
+                    }
                 },
                 error: function() {
                     $('#received-requests-content').html('<div class="alert alert-danger">Failed to load data.</div>');
@@ -349,7 +371,7 @@
         `;
         let consultationsTable = modalTemplate.querySelector('#consultationsTableTemplate tbody');
         consultationsTable.id = '';
-        if (patient.consultation.length > 0) {
+        if (patient.consultation && patient.consultation.length > 0) {
             patient.consultation.forEach(consultation => {
                 consultationsTable.innerHTML += `
                     <tr>
@@ -366,6 +388,7 @@
                 `;
             });
         } else {
+            let consultationsTable = modalTemplate.querySelector('#consultationsTableTemplate');
             consultationsTable.innerHTML = '<div class="alert alert-info mt-3" role="alert">No consultations available.</div>';
         }
         document.body.appendChild(modalTemplate);
@@ -397,8 +420,11 @@
         button.textContent = 'Transferring...';
 
         $.ajax({
-            url: `/staff/patient/data/transfer/send/${transferRequestId}`,
+            url: `/api/staff/patient/data/transfer/send/${transferRequestId}`,
             method: 'GET',
+            headers: {
+                'Authorization': 'Bearer ' + sessionStorage.getItem('access_token')
+            },
             success: function(response) {
                 button.textContent = 'Transfer Complete';
             },

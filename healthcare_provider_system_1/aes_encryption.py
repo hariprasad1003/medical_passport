@@ -4,6 +4,7 @@ import hashlib
 from pymongo import MongoClient
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
+import secrets
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -45,6 +46,9 @@ def generate_dek(master_key):
 def generate_kek():
     kek = os.urandom(32)
     return base64.b64encode(kek).decode()
+
+def generate_jwt_secret_key():
+    return secrets.token_hex(32)
 
 def pad(data):
     pad_length = 16 - len(data) % 16
@@ -169,6 +173,7 @@ if __name__ == '__main__':
     pass
     # print(generate_master_key())
     # print(generate_kek())
+    # print(generate_jwt_secret_key())
 
     # for collection in collections:
         # encrypt_collection_data(collection, non_encrypt_list, MASTER_KEY, kek_bytes)
