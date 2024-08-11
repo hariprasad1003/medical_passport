@@ -5,6 +5,8 @@ from pymongo import MongoClient
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 from dotenv import load_dotenv
+import uuid
+import secrets
 
 load_dotenv()
 
@@ -45,6 +47,15 @@ def generate_dek(master_key):
 def generate_kek():
     kek = os.urandom(32)
     return base64.b64encode(kek).decode()
+
+def generate_jwt_secret_key():
+    return secrets.token_hex(32)
+
+def generate_client_id():
+    return str(uuid.uuid4())
+
+def generate_client_token():
+    return secrets.token_hex(32) 
 
 def pad(data):
     pad_length = 16 - len(data) % 16
@@ -142,15 +153,13 @@ def decrypt_collection_data(collection, non_encrypt_list, kek):
         decrypted_document = decrypt_document(document, non_encrypt_list, dek)
         print(decrypted_document)
         
-        collection.update_one({'_id': document['_id']}, {'$set': decrypted_document})
-        key_collection.delete_one({'document_id': document['_id']})
+        # collection.update_one({'_id': document['_id']}, {'$set': decrypted_document})
+        # key_collection.delete_one({'document_id': document['_id']})
 
 def decrypt_collection_document(document):
     key_info = key_collection.find_one({'document_id': document['_id']})
-    print(key_info)
     encrypted_dek = key_info['encrypted_dek']
     dek = decrypt_dek(encrypted_dek, kek_bytes)
-    print(dek)
     decrypted_document = decrypt_document(document, non_encrypt_list, dek)
     return decrypted_document
 
@@ -162,6 +171,9 @@ if __name__ == '__main__':
     pass
     # print(generate_master_key())
     # print(generate_kek())
+    # print(generate_jwt_secret_key())
+    # print(generate_client_id())
+    # print(generate_client_token())
 
     # for collection in collections:
         # encrypt_collection_data(collection, non_encrypt_list, MASTER_KEY, kek_bytes)

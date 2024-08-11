@@ -55,6 +55,8 @@ STAFF=1
 ADMIN=0
 DOCTOR=1
 
+ACCESS_TOKEN = None
+
 def generate_otp():
     return str(random.randint(100000, 999999))
 
@@ -89,9 +91,43 @@ def format_date_of_birth(date_of_birth_str):
     formatted_date_of_birth = date_of_birth.strftime('%d %B %Y')
     return formatted_date_of_birth
 
-def get_provider_name(provider_id):
+def get_access_token_ghs():
+    global ACCESS_TOKEN
+    if ACCESS_TOKEN:
+        return 200, ACCESS_TOKEN
+    
+    healthcare_provider = healthcare_provider_collection.find_one(sort=[("healthcare_provider_id", -1)])
+    CLIENT_ID = os.getenv('GHS_CLIENT_ID')
+    CLIENT_TOKEN = os.getenv('GHS_CLIENT_TOKEN')
+    ACCESS_TOKEN_URL = f"{os.getenv('GHS_HEALTHCARE_PROVIDER_ACCESS_TOKEN_URL')}/{healthcare_provider['healthcare_provider_id']}"
+    
+    headers = {
+        'Client-Id': CLIENT_ID,
+        'Client-Token': CLIENT_TOKEN
+    }
+    
     try:
-        response = requests.get(f'{os.getenv('GHS_HEALTHCARE_PROVIDER_URL')}/{provider_id}')
+        response = requests.get(ACCESS_TOKEN_URL, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            ACCESS_TOKEN = data['access_token']
+            return response.status_code, ACCESS_TOKEN
+        else:
+            return response.status_code, "Error: Failed to get the access token"
+    except Exception as e:
+        return 500, f"Error: {str(e)}"
+
+def get_provider_name(provider_id):
+    status_code, access_token = get_access_token_ghs()
+    if status_code != 200:
+        return "Unable to retrieve access token"
+
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    try:
+        response = requests.get(f'{os.getenv('GHS_HEALTHCARE_PROVIDER_URL')}/{provider_id}', headers=headers)
         if response.status_code == 200:
             provider_data = response.json()
             return provider_data['healthcare_provider_name']
@@ -101,8 +137,16 @@ def get_provider_name(provider_id):
         return "Unknown Provider"
 
 def get_global_healthcare_providers_details():
+    status_code, access_token = get_access_token_ghs()
+    if status_code != 200:
+        return "Unable to retrieve access token"
+
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
     try:
-        response = requests.get(os.getenv('GHS_ALL_HEALTHCARE_PROVIDER_URL'))
+        response = requests.get(os.getenv('GHS_ALL_HEALTHCARE_PROVIDER_URL'), headers=headers)
         if response.status_code == 200:
             return response.json()
         else:
@@ -205,16 +249,22 @@ def token_required_external_call(f):
         if not token_from_request:
             return jsonify({'message': 'Token is missing!'}), 403
 
-        try:
-            token_from_request = token_from_request.split(" ")[1]
-            data = jwt.decode(token_from_request, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
-            email_address = data['email_address']
-        except jwt.ExpiredSignatureError:
-            return jsonify({'message': 'Token has expired!'}), 403
-        except jwt.InvalidTokenError:
-            return jsonify({'message': 'Invalid token!'}), 403
+        status_code, access_token = get_access_token_ghs()
+        headers = {
+            'Authorization': f'Bearer {access_token}'
+        }
 
-        return f(email_address, *args, **kwargs)
+        data = {
+            'access_token': token_from_request.split(" ")[1]
+        }
+
+        url = os.getenv('GHS_HEALTHCARE_PROVIDER_VALIDATE_ACCESS_TOKEN_URL')
+
+        response = requests.post(url, json=data, headers=headers)
+        if response.status_code != 200:
+            return jsonify({'message': 'Token is invalid or expired!'}), 403
+
+        return f( *args, **kwargs)
 
     return decorated
 
@@ -496,11 +546,11 @@ def patient_data_transfer_request_sent():
 
     healthcare_providers_list = get_global_healthcare_providers_details()
 
-    healthcare_provider_url = None
+    healthcare_provider_send_url = None
     for healthcare_provider in healthcare_providers_list:
         if healthcare_provider['healthcare_provider_id'] == health_provider_to_id:
             web_address = healthcare_provider.get('web_address', {})
-            healthcare_provider_url = f"{web_address.get('domain')}{web_address.get('request_endpoint')}"
+            healthcare_provider_send_url = f"{web_address.get('domain')}{web_address.get('request_endpoint')}"
 
     transfer_data_request_query = {
         'from_transfer_request_id' : new_transfer_request_id,
@@ -513,7 +563,13 @@ def patient_data_transfer_request_sent():
         'country' : country
     }
 
-    response = requests.post(healthcare_provider_url, json=transfer_data_request_query)
+    status_code, access_token = get_access_token_ghs()
+
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    response = requests.post(healthcare_provider_send_url, json=transfer_data_request_query, headers=headers)
     if response.status_code == 200:
         print('Request sent successfully')
         print(response.json())
@@ -529,6 +585,7 @@ def patient_data_transfer_request_sent():
     return jsonify({"message": "Request sent successfully"}), 200
 
 @app.route('/api/staff/data/patient/transfer/request/received', methods=['POST'])
+@token_required_external_call
 def patient_data_transfer_request_received():
     data = request.json
 
@@ -683,13 +740,19 @@ def patient_data_transfer_send(transfer_request_id):
     healthcare_providers_list = get_global_healthcare_providers_details()
     request_from_healthcare_provider_id = transfer_request.get('request_from_healthcare_provider_id')
 
-    healthcare_provider_url = None
+    healthcare_provider_transfer_url = None
     for healthcare_provider in healthcare_providers_list:
         if healthcare_provider['healthcare_provider_id'] == request_from_healthcare_provider_id:
             web_address = healthcare_provider.get('web_address', {})
-            healthcare_provider_url = f"{web_address.get('domain')}{web_address.get('transfer_endpoint')}"
+            healthcare_provider_transfer_url = f"{web_address.get('domain')}{web_address.get('transfer_endpoint')}"
 
-    response = requests.post(healthcare_provider_url, json=patient)
+    status_code, access_token = get_access_token_ghs()
+
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    response = requests.post(healthcare_provider_transfer_url, json=patient, headers=headers)
     if response.status_code == 200:
         print('Request sent successfully')
         print(response.json())
@@ -704,6 +767,7 @@ def patient_data_transfer_send(transfer_request_id):
     return jsonify({"message": "Patient data sent successfully", "data": patient}), 200
 
 @app.route('/api/staff/patient/data/transfer/receive', methods=['POST'])
+@token_required_external_call
 def patient_data_transfer_receive():
     patient_data = request.json
 
