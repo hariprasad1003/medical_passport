@@ -2,3 +2,4 @@ flask
 python-dotenv
 pymongo
 flask_limiter
+flask-wtf

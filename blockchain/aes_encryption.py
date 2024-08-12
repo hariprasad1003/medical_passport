@@ -4,8 +4,9 @@ import hashlib
 from pymongo import MongoClient
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
-import secrets
 from dotenv import load_dotenv
+import uuid
+import secrets
 
 load_dotenv()
 
@@ -30,7 +31,7 @@ key_collection = db['key']
 non_encrypt_list = ['_id', 'user_id', 'email_address', 'role', 'healthcare_provider_id', 'patient_id', 'staff_id', 'transfer_request_id', 'request_from_healthcare_provider_id', 'request_to_healthcare_provider_id', 'request_type', 'request_status']
 
 collections = [
-    user_collection
+    healthcare_provider_collection
 ]
 
 def generate_master_key():
@@ -49,6 +50,12 @@ def generate_kek():
 
 def generate_jwt_secret_key():
     return secrets.token_hex(32)
+
+def generate_client_id():
+    return str(uuid.uuid4())
+
+def generate_client_token():
+    return secrets.token_hex(32) 
 
 def pad(data):
     pad_length = 16 - len(data) % 16
@@ -117,15 +124,6 @@ def encrypt_collection_data(collection, non_encrypt_list, master_key, kek):
         collection.update_one({'_id': document['_id']}, {'$set': updated_document})
         key_collection.insert_one({'document_id': document['_id'], 'encrypted_dek': encrypted_dek})
 
-def encrypt_collection_document(document):
-    dek = generate_dek(MASTER_KEY)
-    encrypted_dek = encrypt_dek(dek, kek_bytes)
-    updated_document = encrypt_document(document, non_encrypt_list, dek)
-    return updated_document, encrypted_dek
-
-def insert_encryted_document_key(document_id, encrypted_dek):
-    key_collection.insert_one({'document_id': document_id, 'encrypted_dek': encrypted_dek})
-
 def decrypt_document(document, non_encrypt_list, dek):
     decrypted_document = {}
 
@@ -174,6 +172,8 @@ if __name__ == '__main__':
     # print(generate_master_key())
     # print(generate_kek())
     # print(generate_jwt_secret_key())
+    # print(generate_client_id())
+    # print(generate_client_token())
 
     # for collection in collections:
         # encrypt_collection_data(collection, non_encrypt_list, MASTER_KEY, kek_bytes)

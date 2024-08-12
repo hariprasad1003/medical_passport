@@ -5,7 +5,7 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, abort
 import requests
 import string
 import aes_encryption
@@ -13,9 +13,23 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import jwt
 from functools import wraps
+from markupsafe import escape
+from flask_wtf.csrf import CSRFProtect
+from werkzeug.security import generate_password_hash, check_password_hash
+from blockchain import Blockchain
+from bson import ObjectId
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
+
+# csrf = CSRFProtect(app)
+
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    PERMANENT_SESSION_LIFETIME=timedelta(minutes=30),
+    SESSION_COOKIE_SAMESITE='Lax'
+)
 
 limiter = Limiter(
     key_func=get_remote_address,
@@ -35,6 +49,9 @@ staffs_collection = db['staff']
 patients_collection = db['patient']
 transfer_request_sent_collection = db['transfer_request_sent']
 transfer_request_received_collection = db['transfer_request_received']
+blockchain_collection = db['blockchain']
+
+blockchain = Blockchain(blockchain_collection)
 
 REQUEST_SENT = 0
 REQUEST_RECEIVED = 1
@@ -56,6 +73,36 @@ ADMIN=0
 DOCTOR=1
 
 ACCESS_TOKEN = None
+ACCESS_TOKEN_TIME = None
+
+ROLE_PERMISSIONS = {
+    PATIENT: {
+        'allowed_endpoints': [
+            'patient_home',
+            'patient_data_transfer_request_received_list_endpoint_for_patient',
+            'patient_transfer_request_approve'
+        ]
+    },
+    STAFF: {
+        'allowed_endpoints': [
+            'staff_home',
+            'get_patients',
+            'patient_data_transfer_request_sent',
+            'patient_data_transfer_request_received',
+            'patient_data_transfer_request_sent_list',
+            'patient_data_transfer_request_received_list',
+            'patient_data_transfer_send',
+            'patient_data_transfer_receive'
+        ]
+    }
+}
+
+healthcare_providers_list = []
+
+REQUEST_ENDPOINT = 'request_endpoint'
+TRANSFER_ENDPOINT = 'transfer_endpoint'
+REQUEST_UPDATE_ENDPOINT = 'request_update_endpoint'
+
 
 def generate_otp():
     return str(random.randint(100000, 999999))
@@ -92,9 +139,12 @@ def format_date_of_birth(date_of_birth_str):
     return formatted_date_of_birth
 
 def get_access_token_ghs():
-    global ACCESS_TOKEN
-    if ACCESS_TOKEN:
-        return 200, ACCESS_TOKEN
+    global ACCESS_TOKEN, ACCESS_TOKEN_TIME
+    
+    if ACCESS_TOKEN and ACCESS_TOKEN_TIME:
+        elapsed_time = datetime.now() - ACCESS_TOKEN_TIME
+        if elapsed_time < timedelta(minutes=30):
+            return 200, ACCESS_TOKEN
     
     healthcare_provider = healthcare_provider_collection.find_one(sort=[("healthcare_provider_id", -1)])
     CLIENT_ID = os.getenv('GHS_CLIENT_ID')
@@ -111,6 +161,7 @@ def get_access_token_ghs():
         if response.status_code == 200:
             data = response.json()
             ACCESS_TOKEN = data['access_token']
+            ACCESS_TOKEN_TIME = datetime.now()
             return response.status_code, ACCESS_TOKEN
         else:
             return response.status_code, "Error: Failed to get the access token"
@@ -137,6 +188,10 @@ def get_provider_name(provider_id):
         return "Unknown Provider"
 
 def get_global_healthcare_providers_details():
+    global healthcare_providers_list
+    if len(healthcare_providers_list) > 0:
+        return healthcare_providers_list
+
     status_code, access_token = get_access_token_ghs()
     if status_code != 200:
         return "Unable to retrieve access token"
@@ -148,7 +203,8 @@ def get_global_healthcare_providers_details():
     try:
         response = requests.get(os.getenv('GHS_ALL_HEALTHCARE_PROVIDER_URL'), headers=headers)
         if response.status_code == 200:
-            return response.json()
+            healthcare_providers_list = response.json()
+            return healthcare_providers_list
         else:
             return {"error": "Failed to fetch data from API"}
     except Exception as e:
@@ -162,7 +218,19 @@ def get_healthcare_providers_list_based_on_country(healthcare_providers_list):
             country_based_providers[country] = []
         country_based_providers[country].append(healthcare_provider)
     return country_based_providers
-    
+
+def get_healthcare_provider_url(healthcare_provider_id, url_type):
+    healthcare_providers_list = get_global_healthcare_providers_details()
+
+    healthcare_provider_url = None
+    for healthcare_provider in healthcare_providers_list:
+        if int(healthcare_provider['healthcare_provider_id']) == int(healthcare_provider_id):
+            web_address = healthcare_provider.get('web_address', {})
+            healthcare_provider_url = f"{web_address.get('domain')}{web_address.get(url_type)}"
+    print(healthcare_provider_id, url_type, healthcare_provider_url)
+
+    return healthcare_provider_url    
+
 def find_patient_by_first_name(first_name, last_name, date_of_birth, house_number, post_code, country):
     formatted_first_name = first_name.title()
     formatted_last_name = last_name.title()
@@ -211,6 +279,26 @@ def create_token(email_address):
         'exp': datetime.utcnow() + timedelta(minutes=30)
     }, app.config['JWT_SECRET_KEY'], algorithm='HS256')
     return token
+
+def sanitize_input(value):
+    if isinstance(value, dict):
+        return {k: sanitize_input(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [sanitize_input(item) for item in value]
+    elif isinstance(value, str):
+        return escape(value)
+    else:
+        return value
+
+def add_transaction_to_blockchain(transfer_request):
+    blockchain.new_transaction(transfer_request)
+
+    last_proof = blockchain.last_block['proof']
+    proof = blockchain.proof_of_work(last_proof)
+
+    previous_hash = blockchain.hash(blockchain.last_block)
+    block = blockchain.new_block(proof, previous_hash)
+
 
 def token_required_internal_call(f):
     @wraps(f)
@@ -268,6 +356,22 @@ def token_required_external_call(f):
 
     return decorated
 
+def role_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user_role = session.get('role')
+        if user_role == None:
+            abort(403, 'Access denied: No role defined in session.')
+
+        role_info = ROLE_PERMISSIONS.get(user_role, {})
+
+        if request.endpoint not in role_info.get('allowed_endpoints', []):
+            abort(403, 'Access denied: Your role does not have permission to access this resource.')
+
+        return f(*args, **kwargs)
+
+    return decorated_function
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -275,7 +379,7 @@ def index():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        email_address = request.form['email_address']
+        email_address = escape(request.form['email_address'])
         password = request.form['password']
 
         user = users_collection.find_one({'email_address': email_address})
@@ -298,14 +402,14 @@ def login():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        email_address = request.form['email_address']
+        email_address = escape(request.form['email_address'])
         password = request.form['password']
-        first_name = request.form['first_name']
-        last_name = request.form['last_name']
-        date_of_birth = request.form['date_of_birth']
-        gender = request.form['gender']
-        house_number = request.form['house_number']
-        post_code = request.form['post_code']
+        first_name = escape(request.form['first_name'])
+        last_name = escape(request.form['last_name'])
+        date_of_birth = escape(request.form['date_of_birth'])
+        gender = escape(request.form['gender'])
+        house_number = escape(request.form['house_number'])
+        post_code = escape(request.form['post_code'])
 
         user = users_collection.find_one({'email_address': email_address})
         if user:
@@ -402,6 +506,7 @@ def home():
 
 @app.route('/patient/home', methods=['GET'])
 @token_required_internal_call
+@role_required
 def patient_home():
     email_address = session.get('email')
     user = users_collection.find_one({'email_address': email_address})
@@ -442,6 +547,7 @@ def patient_home():
 
 @app.route('/staff/home', methods=['GET'])
 @token_required_internal_call
+@role_required
 def staff_home():
     email_address = session.get('email')
     user = users_collection.find_one({'email_address': email_address})
@@ -475,6 +581,7 @@ def staff_home():
 
 @app.route('/api/staff/home/patients/list', methods=['GET'])
 @token_required_internal_call
+@role_required
 def get_patients():
     patients = list(patients_collection.find({}))
     patients_info = []
@@ -509,16 +616,17 @@ def get_patients():
 
 @app.route('/api/staff/data/patient/transfer/request/sent', methods=['POST'])
 @token_required_internal_call
+@role_required
 def patient_data_transfer_request_sent():
     data = request.json
 
-    country = data.get('country')
-    health_provider_to_id = int(data.get('healthcare_provider_id'))
-    first_name = data.get('first_name')
-    last_name = data.get('last_name')
-    date_of_birth = data.get('date_of_birth')
-    house_number = data.get('house_number')
-    post_code = data.get('post_code')
+    country = escape(data.get('country'))
+    healthcare_provider_to_id = int(escape(data.get('healthcare_provider_id')))
+    first_name = escape(data.get('first_name'))
+    last_name = escape(data.get('last_name'))
+    date_of_birth = escape(data.get('date_of_birth'))
+    house_number = escape(data.get('house_number'))
+    post_code = escape(data.get('post_code'))
 
     last_transfer_request_sent = transfer_request_sent_collection.find_one(sort=[("user_id", -1)])
     new_transfer_request_id = last_transfer_request_sent['transfer_request_id'] + 1 if last_transfer_request_sent else 1
@@ -529,7 +637,7 @@ def patient_data_transfer_request_sent():
     transfer_request = {
         'transfer_request_id' : new_transfer_request_id,
         'request_from_healthcare_provider_id' : healthcare_provider_from_id,
-        'request_to_healthcare_provider_id' : health_provider_to_id,
+        'request_to_healthcare_provider_id' : healthcare_provider_to_id,
         'request_type' : REQUEST_SENT,
         "patient_info": {
             'first_name' : first_name,
@@ -544,13 +652,6 @@ def patient_data_transfer_request_sent():
         'request_status' : REQUEST_SENT
     }
 
-    healthcare_providers_list = get_global_healthcare_providers_details()
-
-    healthcare_provider_send_url = None
-    for healthcare_provider in healthcare_providers_list:
-        if healthcare_provider['healthcare_provider_id'] == health_provider_to_id:
-            web_address = healthcare_provider.get('web_address', {})
-            healthcare_provider_send_url = f"{web_address.get('domain')}{web_address.get('request_endpoint')}"
 
     transfer_data_request_query = {
         'from_transfer_request_id' : new_transfer_request_id,
@@ -563,19 +664,21 @@ def patient_data_transfer_request_sent():
         'country' : country
     }
 
+    healthcare_provider_url = get_healthcare_provider_url(healthcare_provider_to_id, REQUEST_ENDPOINT)
     status_code, access_token = get_access_token_ghs()
-
     headers = {
         'Authorization': f'Bearer {access_token}'
     }
 
-    response = requests.post(healthcare_provider_send_url, json=transfer_data_request_query, headers=headers)
+    response = requests.post(healthcare_provider_url, json=transfer_data_request_query, headers=headers)
     if response.status_code == 200:
         print('Request sent successfully')
         print(response.json())
     else:
         print(f'Failed to sent request: {response.status_code}')
         print(response.text)
+
+    add_transaction_to_blockchain(transfer_request)
 
     transfer_request, encrypted_dek = aes_encryption.encrypt_collection_document(transfer_request)
     result = transfer_request_sent_collection.insert_one(transfer_request)
@@ -589,14 +692,14 @@ def patient_data_transfer_request_sent():
 def patient_data_transfer_request_received():
     data = request.json
 
-    from_transfer_request_id = int(data.get('from_transfer_request_id'))
-    country = data.get('country')
-    healthcare_provider_from_id = int(data.get('healthcare_provider_id'))
-    first_name = data.get('first_name')
-    last_name = data.get('last_name')
-    date_of_birth = data.get('date_of_birth')
-    house_number = data.get('house_number')
-    post_code = data.get('post_code')
+    from_transfer_request_id = int(escape(data.get('from_transfer_request_id')))
+    country = escape(data.get('country'))
+    healthcare_provider_from_id = int(escape(data.get('healthcare_provider_id')))
+    first_name = escape(data.get('first_name'))
+    last_name = escape(data.get('last_name'))
+    date_of_birth = escape(data.get('date_of_birth'))
+    house_number = escape(data.get('house_number'))
+    post_code = escape(data.get('post_code'))
 
     last_transfer_request_received = transfer_request_received_collection.find_one(sort=[("user_id", -1)])
     new_transfer_request_id = last_transfer_request_received['transfer_request_id'] + 1 if last_transfer_request_received else 1
@@ -618,10 +721,36 @@ def patient_data_transfer_request_received():
 
     transfer_request_received_collection.insert_one(transfer_request)
 
+
+    healthcare_provider_url = get_healthcare_provider_url(healthcare_provider_from_id, REQUEST_UPDATE_ENDPOINT)
+    status_code, access_token = get_access_token_ghs()
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    data = {
+        'transfer_request_id' : from_transfer_request_id,
+        'transfer_request_status' : REQUEST_RECEIVED
+    }
+
+    response = requests.post(healthcare_provider_url, json=data, headers=headers)
+    if response.status_code == 200:
+        print(f'Request status updated successfully: {REQUEST_RECEIVED}')
+        print(response.json())
+    else:
+        print(f'Failed to sent request: {response.status_code}')
+        print(response.text)
+
+    if transfer_request and '_id' in transfer_request:
+        del transfer_request['_id']
+
+    add_transaction_to_blockchain(transfer_request)
+
     return jsonify({"message": "Request received successfully"}), 200
 
 @app.route('/api/staff/transfer/request/sent/list', methods=['GET'])
 @token_required_internal_call
+@role_required
 def patient_data_transfer_request_sent_list():
 
     transfer_requests_sent = list(transfer_request_sent_collection.find({}))
@@ -639,6 +768,7 @@ def patient_data_transfer_request_sent_list():
 
 @app.route('/api/staff/transfer/request/received/list', methods=['GET'])
 @token_required_internal_call
+@role_required
 def patient_data_transfer_request_received_list():
 
     transfer_requests_received = list(transfer_request_received_collection.find({}))
@@ -662,6 +792,7 @@ def patient_data_transfer_request_received_list():
 
 @app.route('/api/patient/transfer/request/received/list/<patient_id>', methods=['GET'])
 @token_required_internal_call
+@role_required
 def patient_data_transfer_request_received_list_endpoint_for_patient(patient_id):
 
     transfer_requests_received = list(transfer_request_received_collection.find({'patient_id': int(patient_id)}))
@@ -677,6 +808,7 @@ def patient_data_transfer_request_received_list_endpoint_for_patient(patient_id)
 
 @app.route('/api/patient/transfer/request/approve/<transfer_request_id>', methods=['POST'])
 @token_required_internal_call
+@role_required
 def patient_transfer_request_approve(transfer_request_id):
 
     transfer_request_id = int(transfer_request_id)
@@ -685,19 +817,73 @@ def patient_transfer_request_approve(transfer_request_id):
         return jsonify({"error": "Invalid Request Id"}), 400
     
     transfer_request = transfer_request_received_collection.find_one({'transfer_request_id': transfer_request_id})
-    
+    from_transfer_request_id = transfer_request["from_transfer_request_id"]
+    healthcare_provider_from_id = transfer_request["request_from_healthcare_provider_id"]
+
     if not transfer_request:
         return jsonify({"error": "Request Id not found"}), 404
 
-    transfer_request_received_collection.update_one(
+    updated_document = transfer_request_received_collection.find_one_and_update(
         {'transfer_request_id': transfer_request_id},
-        {'$set': {'request_status': REQUEST_APPROVED}}
+        {'$set': {'request_status': REQUEST_APPROVED}},
+        return_document=True
     )
+
+    if updated_document and '_id' in updated_document:
+        del updated_document['_id']
+
+    healthcare_provider_url = get_healthcare_provider_url(healthcare_provider_from_id, REQUEST_UPDATE_ENDPOINT)
+    status_code, access_token = get_access_token_ghs()
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    data = {
+        'transfer_request_id' : from_transfer_request_id,
+        'transfer_request_status' : REQUEST_APPROVED
+    }
+
+    response = requests.post(healthcare_provider_url, json=data, headers=headers)
+    if response.status_code == 200:
+        print(f'Request status updated successfully: {REQUEST_APPROVED}')
+        print(response.json())
+    else:
+        print(f'Failed to sent request: {response.status_code}')
+        print(response.text)
+
+    print(updated_document)
+
+    add_transaction_to_blockchain(updated_document)
     
     return jsonify({"message": "Request approved successfully"}), 200
 
+@app.route('/api/data/patient/transfer/request/status/update', methods=['POST'])
+@token_required_external_call
+def patient_data_transfer_request_status_update():
+    data = sanitize_input(request.json)
+
+    transfer_request_id = int(data['transfer_request_id'])
+    transfer_request_status = int(data['transfer_request_status'])
+
+
+    updated_document = transfer_request_sent_collection.find_one_and_update(
+        {'transfer_request_id': transfer_request_id},
+        {'$set': {'request_status': transfer_request_status}},
+        return_document=True
+    )
+
+    print(data, transfer_request_id, transfer_request_status, updated_document)
+
+    if updated_document and '_id' in updated_document:
+        del updated_document['_id']
+
+    add_transaction_to_blockchain(updated_document)
+
+    return jsonify({"message": "Request status updated successfully"}), 200
+
 @app.route('/api/staff/patient/data/transfer/send/<transfer_request_id>', methods=['GET'])
 @token_required_internal_call
+@role_required
 def patient_data_transfer_send(transfer_request_id):
 
     transfer_request_id = int(transfer_request_id)
@@ -715,7 +901,9 @@ def patient_data_transfer_send(transfer_request_id):
     user = users_collection.find_one({'user_id' : patient['user_id']})
     user = aes_encryption.decrypt_collection_document(user)
 
+    patient['to_transfer_request_id'] = transfer_request_id
     patient['from_transfer_request_id'] = from_transfer_request_id
+    patient['request_status'] = PATIENT_DATA_TRANSFERRED
     patient['email_address'] = user['email_address']
     patient['original_healthcare_provider_id'] = patient['healthcare_provider_id'] 
     del patient['_id']
@@ -737,22 +925,14 @@ def patient_data_transfer_send(transfer_request_id):
             consultation['staff_name'] = staff_name
             del consultation['staff_id']
 
-    healthcare_providers_list = get_global_healthcare_providers_details()
     request_from_healthcare_provider_id = transfer_request.get('request_from_healthcare_provider_id')
-
-    healthcare_provider_transfer_url = None
-    for healthcare_provider in healthcare_providers_list:
-        if healthcare_provider['healthcare_provider_id'] == request_from_healthcare_provider_id:
-            web_address = healthcare_provider.get('web_address', {})
-            healthcare_provider_transfer_url = f"{web_address.get('domain')}{web_address.get('transfer_endpoint')}"
-
+    healthcare_provider_url = get_healthcare_provider_url(request_from_healthcare_provider_id, TRANSFER_ENDPOINT)
     status_code, access_token = get_access_token_ghs()
-
     headers = {
         'Authorization': f'Bearer {access_token}'
     }
 
-    response = requests.post(healthcare_provider_transfer_url, json=patient, headers=headers)
+    response = requests.post(healthcare_provider_url, json=patient, headers=headers)
     if response.status_code == 200:
         print('Request sent successfully')
         print(response.json())
@@ -764,12 +944,15 @@ def patient_data_transfer_send(transfer_request_id):
         {'transfer_request_id': transfer_request_id},
         {'$set': {'request_status': PATIENT_DATA_TRANSFERRED}}
     )
+
+    add_transaction_to_blockchain(patient)
+
     return jsonify({"message": "Patient data sent successfully", "data": patient}), 200
 
 @app.route('/api/staff/patient/data/transfer/receive', methods=['POST'])
 @token_required_external_call
 def patient_data_transfer_receive():
-    patient_data = request.json
+    patient_data = sanitize_input(request.json)
 
     last_patient = patients_collection.find_one(sort=[("patient_id", -1)])
     new_patient_id = last_patient['patient_id'] + 1 if last_patient else 1
@@ -781,6 +964,7 @@ def patient_data_transfer_receive():
 
     patient_data['patient_id'] = new_patient_id
     patient_data['healthcare_provider_id'] = healthcare_provider_id
+    patient_data['request_status'] = PATIENT_DATA_RECEIVED
 
     email_address = patient_data['email_address']
     del patient_data['email_address']
@@ -810,6 +994,8 @@ def patient_data_transfer_receive():
         {'transfer_request_id': from_transfer_request_id},
         {'$set': {'request_status': PATIENT_DATA_RECEIVED}}
     )
+
+    add_transaction_to_blockchain(patient_data)
 
     return jsonify({"message": "Patient data received successfully"}), 200
 
