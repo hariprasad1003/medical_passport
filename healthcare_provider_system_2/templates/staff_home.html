@@ -304,12 +304,42 @@
                     if (data.length === 0) {
                         $('#sent-requests-content').html('<div class="alert alert-info mt-3" role="alert">No transfer requests sent.</div>');
                     } else {
-                        let content = '<div class="table-responsive mt-3"><table class="table table-bordered"><thead><tr><th>Transfer ID</th><th>From Provider</th><th>To Provider</th><th>Patient Name</th><th>Date of Birth</th><th>Address</th><th>Status</th></tr></thead><tbody>';
+                        let content = '<div class="table-responsive mt-3"><table class="table table-bordered"><thead><tr><th>Transfer ID</th><th>From Provider</th><th>To Provider</th><th>Patient Name</th><th>Date of Birth</th><th>Address</th><th>Status</th><th>Integrity Check</th></tr></thead><tbody>';
                         data.forEach(request => {
-                            content += `<tr><td>${request.transfer_request_id}</td><td>${request.from_provider_name}</td><td>${request.to_provider_name}</td><td>${request.patient_info.first_name} ${request.patient_info.last_name}</td><td>${request.patient_info.date_of_birth}</td><td>${request.patient_info.address.house_number}, ${request.patient_info.address.post_code}, ${request.patient_info.address.country}</td><td>${requestStatuses[request.request_status]}</td></tr>`;
+                            content += `<tr><td>${request.transfer_request_id}</td><td>${request.from_provider_name}</td><td>${request.to_provider_name}</td><td>${request.patient_info.first_name} ${request.patient_info.last_name}</td><td>${request.patient_info.date_of_birth}</td><td>${request.patient_info.address.house_number}, ${request.patient_info.address.post_code}, ${request.patient_info.address.country}</td><td>${requestStatuses[request.request_status]}</td>`;
+
+                            if (request.request_status === 4) {
+                                content += `<td><button class="btn btn-primary integrity-check-btn" data-id="${request.transfer_request_id}">Check Integrity</button></td>`;
+                            } else {
+                                content += `<td>Not Available</td>`;
+                            }
+
+                            content += `</tr>`;
                         });
                         content += '</tbody></table></div>';
                         $('#sent-requests-content').html(content);
+
+                        $('.integrity-check-btn').on('click', function() {
+                            const transferRequestId = $(this).data('id');
+                            const button = $(this);
+                            button.text('Checking...').prop('disabled', true);
+
+                            $.ajax({
+                                url: `/api/staff/transfer/request/patient/data/integrity/check/${transferRequestId}`,
+                                method: 'GET',
+                                headers: {
+                                    'Authorization': 'Bearer ' + sessionStorage.getItem('access_token')
+                                },
+                                success: function(response) {
+                                    const message = response.message || 'Check Complete';
+                                    button.text(message);
+                                },
+                                error: function(jqXHR, textStatus, errorThrown) {
+                                    console.error('Error checking integrity:', errorThrown);
+                                    button.text('Check Failed');
+                                }
+                            });
+                        });
                     }
                 },
                 error: function() {
@@ -336,8 +366,10 @@
                         data.forEach(request => {
                             content += `<tr><td>${request.transfer_request_id}</td><td>${request.from_provider_name}</td><td>${request.to_provider_name}</td><td>${request.patient_info.first_name} ${request.patient_info.last_name}</td><td>${request.patient_info.date_of_birth}</td><td>${request.patient_info.address.house_number}, ${request.patient_info.address.post_code}, ${request.patient_info.address.country}</td><td>${requestStatuses[request.request_status]}</td>`;
 
-                            if (request.request_status <= 2) {
+                            if (request.request_status === 2) {
                                 content += `<td><button class="btn btn-primary" id="transfer-btn-${request.transfer_request_id}" onclick="transferData(${request.transfer_request_id})">Transfer Data</button></td>`;
+                            } else if (request.request_status < 2) {
+                                content += `<td>Waiting for Patient's Approval</td>`;
                             } else {
                                 content += `<td>Transfer Complete</td>`;
                             }

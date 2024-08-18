@@ -18,11 +18,14 @@ from flask_wtf.csrf import CSRFProtect
 from werkzeug.security import generate_password_hash, check_password_hash
 from blockchain import Blockchain
 from bson import ObjectId
+import rsa_encryption
+import base64
+import hashlib
+import json
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# csrf = CSRFProtect(app)
 
 app.config.update(
     SESSION_COOKIE_SECURE=True,
@@ -33,7 +36,7 @@ app.config.update(
 
 limiter = Limiter(
     key_func=get_remote_address,
-    default_limits=["5 per minute", "50 per hour"]
+    default_limits=["10 per minute", "100 per hour"]
 )
 limiter.init_app(app)
 
@@ -92,7 +95,8 @@ ROLE_PERMISSIONS = {
             'patient_data_transfer_request_sent_list',
             'patient_data_transfer_request_received_list',
             'patient_data_transfer_send',
-            'patient_data_transfer_receive'
+            'patient_data_transfer_receive',
+            'transfer_patient_data_integrity_check'
         ]
     }
 }
@@ -102,6 +106,8 @@ healthcare_providers_list = []
 REQUEST_ENDPOINT = 'request_endpoint'
 TRANSFER_ENDPOINT = 'transfer_endpoint'
 REQUEST_UPDATE_ENDPOINT = 'request_update_endpoint'
+INTEGRITY_ENDPOINT = 'integrity_endpoint'
+KEY_ENDPOINT = 'key_endpoint'
 
 
 def generate_otp():
@@ -227,7 +233,6 @@ def get_healthcare_provider_url(healthcare_provider_id, url_type):
         if int(healthcare_provider['healthcare_provider_id']) == int(healthcare_provider_id):
             web_address = healthcare_provider.get('web_address', {})
             healthcare_provider_url = f"{web_address.get('domain')}{web_address.get(url_type)}"
-    print(healthcare_provider_id, url_type, healthcare_provider_url)
 
     return healthcare_provider_url    
 
@@ -371,6 +376,35 @@ def role_required(f):
         return f(*args, **kwargs)
 
     return decorated_function
+
+def encrypt_transfer_data(document):
+    private_key, public_key = rsa_encryption.generate_keys()
+    encrypted_data = rsa_encryption.encrypt_document(document, public_key)
+
+    print('encrypted_data', encrypted_data)
+
+    encrypted_data = rsa_encryption.encode_to_base64(encrypted_data)
+
+    print('encrypted_data', encrypted_data)
+    
+    private_key_pem = rsa_encryption.convert_private_key_to_pem(private_key)
+    public_key_pem = rsa_encryption.convert_public_key_to_pem(public_key)
+
+    encrypted_private_pem = aes_encryption.encrypt_dek(private_key_pem, rsa_encryption.kek2_bytes)
+    encrypted_public_pem = aes_encryption.encrypt_dek(public_key_pem, rsa_encryption.kek2_bytes)
+
+    return encrypted_data, encrypted_private_pem, encrypted_public_pem
+
+def decrypt_tranfer_data(document, key):
+    print('decrypt_tranfer_data document, key', document, key)
+    private_key_bytes = base64.b64decode(key)
+    private_key = rsa_encryption.convert_pem_to_private_key(private_key_bytes)
+    print('decrypt_tranfer_data private_key', private_key)
+    document = rsa_encryption.decode_from_base64(document)
+    print('decrypt_tranfer_data document', document)
+    decrypted_document = rsa_encryption.decrypt_document(document, private_key)
+    print('decrypt_tranfer_data decrypted_document', decrypted_document)
+    return decrypted_document
 
 @app.route('/')
 def index():
@@ -591,11 +625,15 @@ def get_patients():
         consultations = patient.get('consultation', [])
         for consultation in consultations:
             staff_id = consultation.get('staff_id')
-            staff_member = staffs_collection.find_one({'staff_id': staff_id})
-            staff_member = aes_encryption.decrypt_collection_document(staff_member)
-            if staff_member:
-                doctor_name = f"{staff_member['first_name']} {staff_member['last_name']}"
-                consultation['doctor_name'] = doctor_name
+            staff_name = consultation.get('staff_name')
+            if staff_id:
+                staff_member = staffs_collection.find_one({'staff_id': staff_id})
+                if staff_member:
+                    staff_member = aes_encryption.decrypt_collection_document(staff_member)
+                    doctor_name = f"{staff_member['first_name']} {staff_member['last_name']}"
+                    consultation['doctor_name'] = doctor_name
+            elif staff_name:
+                consultation['doctor_name'] = staff_name
 
         patient_info = {
             'first_name': patient['first_name'],
@@ -652,6 +690,12 @@ def patient_data_transfer_request_sent():
         'request_status' : REQUEST_SENT
     }
 
+    transfer_request, encrypted_dek = aes_encryption.encrypt_collection_document(transfer_request)
+    result = transfer_request_sent_collection.insert_one(transfer_request)
+    inserted_id = result.inserted_id
+    aes_encryption.insert_encryted_document_key(inserted_id, encrypted_dek)
+
+    add_transaction_to_blockchain(transfer_request)
 
     transfer_data_request_query = {
         'from_transfer_request_id' : new_transfer_request_id,
@@ -664,13 +708,17 @@ def patient_data_transfer_request_sent():
         'country' : country
     }
 
+    encrypted_data, encrypted_private_pem, encrypted_public_pem = encrypt_transfer_data(transfer_data_request_query)
+    print('inside encrypted_data', encrypted_data)
+    rsa_encryption.insert_encryted_document_key(new_transfer_request_id, encrypted_private_pem, encrypted_public_pem)
+
     healthcare_provider_url = get_healthcare_provider_url(healthcare_provider_to_id, REQUEST_ENDPOINT)
     status_code, access_token = get_access_token_ghs()
     headers = {
         'Authorization': f'Bearer {access_token}'
     }
 
-    response = requests.post(healthcare_provider_url, json=transfer_data_request_query, headers=headers)
+    response = requests.post(healthcare_provider_url, json=encrypted_data, headers=headers)
     if response.status_code == 200:
         print('Request sent successfully')
         print(response.json())
@@ -678,23 +726,67 @@ def patient_data_transfer_request_sent():
         print(f'Failed to sent request: {response.status_code}')
         print(response.text)
 
-    add_transaction_to_blockchain(transfer_request)
-
-    transfer_request, encrypted_dek = aes_encryption.encrypt_collection_document(transfer_request)
-    result = transfer_request_sent_collection.insert_one(transfer_request)
-    inserted_id = result.inserted_id
-    aes_encryption.insert_encryted_document_key(inserted_id, encrypted_dek)
-
     return jsonify({"message": "Request sent successfully"}), 200
+
+@app.route('/api/staff/patient/data/get/key/request/<transfer_request_id>', methods=['GET'])
+@token_required_external_call
+def patient_data_transfer_request_get_key(transfer_request_id):
+    document = rsa_encryption.get_encrypted_document_key(transfer_request_id)
+
+    print('patient_data_transfer_request_get_key document', document)
+
+    encrypted_private_pem = document['encrypted_private_key']
+    encrypted_public_pem = document['encrypted_public_key']
+
+    print('patient_data_transfer_request_get_key encrypted_private_pem, encrypted_public_pem', encrypted_private_pem, encrypted_public_pem)
+
+    decrypted_private_pem = aes_encryption.decrypt_dek(encrypted_private_pem, rsa_encryption.kek2_bytes)
+    decrypted_public_pem = aes_encryption.decrypt_dek(encrypted_public_pem, rsa_encryption.kek2_bytes)
+
+    print('patient_data_transfer_request_get_key decrypted_private_pem, decrypted_public_pem', decrypted_private_pem, decrypted_public_pem)
+
+    private_key_str = base64.b64encode(decrypted_private_pem).decode('utf-8')
+
+    print('patient_data_transfer_request_get_key private_key_str', private_key_str)
+
+    return jsonify({"key": private_key_str}), 200
 
 @app.route('/api/staff/data/patient/transfer/request/received', methods=['POST'])
 @token_required_external_call
 def patient_data_transfer_request_received():
     data = request.json
 
-    from_transfer_request_id = int(escape(data.get('from_transfer_request_id')))
-    country = escape(data.get('country'))
+    print('patient_data_transfer_request_received data', data)
+
     healthcare_provider_from_id = int(escape(data.get('healthcare_provider_id')))
+    from_transfer_request_id = int(escape(data.get('from_transfer_request_id')))
+
+    print('patient_data_transfer_request_received healthcare_provider_from_id, from_transfer_request_id', healthcare_provider_from_id, from_transfer_request_id)
+
+    healthcare_provider_url = get_healthcare_provider_url(healthcare_provider_from_id, KEY_ENDPOINT)
+    status_code, access_token = get_access_token_ghs()
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    key = None
+    response = requests.get(f'{healthcare_provider_url}/{from_transfer_request_id}', headers=headers)
+    if response.status_code == 200:
+        print(f'Request key fetched successfully: ')
+        response_data = response.json()
+        key = response_data['key']
+        print('patient_data_transfer_request_received key', key)
+    else:
+        print(f'Failed to sent request: {response.status_code}')
+        print(response.text)
+
+    print('patient_data_transfer_request_received data, key', data, key)
+    data = decrypt_tranfer_data(data, key)
+
+    print('patient_data_transfer_request_received decrypted data', data)
+
+    country = escape(data.get('country'))
+
     first_name = escape(data.get('first_name'))
     last_name = escape(data.get('last_name'))
     date_of_birth = escape(data.get('date_of_birth'))
@@ -721,12 +813,7 @@ def patient_data_transfer_request_received():
 
     transfer_request_received_collection.insert_one(transfer_request)
 
-
     healthcare_provider_url = get_healthcare_provider_url(healthcare_provider_from_id, REQUEST_UPDATE_ENDPOINT)
-    status_code, access_token = get_access_token_ghs()
-    headers = {
-        'Authorization': f'Bearer {access_token}'
-    }
 
     data = {
         'transfer_request_id' : from_transfer_request_id,
@@ -851,8 +938,6 @@ def patient_transfer_request_approve(transfer_request_id):
         print(f'Failed to sent request: {response.status_code}')
         print(response.text)
 
-    print(updated_document)
-
     add_transaction_to_blockchain(updated_document)
     
     return jsonify({"message": "Request approved successfully"}), 200
@@ -872,11 +957,6 @@ def patient_data_transfer_request_status_update():
         return_document=True
     )
 
-    print(data, transfer_request_id, transfer_request_status, updated_document)
-
-    if updated_document and '_id' in updated_document:
-        del updated_document['_id']
-
     add_transaction_to_blockchain(updated_document)
 
     return jsonify({"message": "Request status updated successfully"}), 200
@@ -892,6 +972,10 @@ def patient_data_transfer_send(transfer_request_id):
         return jsonify({"error": "Invalid Request Id"}), 400
     
     transfer_request = transfer_request_received_collection.find_one({'transfer_request_id': transfer_request_id})
+    transfer_request_status = int(transfer_request.get('request_status'))
+
+    if(transfer_request_status < REQUEST_APPROVED):
+        return jsonify({"error": "Patient's Approval Required to Transfer Data"}), 400
 
     patient_id = int(transfer_request.get('patient_id'))
     from_transfer_request_id = int(transfer_request.get('from_transfer_request_id'))
@@ -917,13 +1001,17 @@ def patient_data_transfer_send(transfer_request_id):
     for consultation in patient.get('consultation', []):
         staff_id = consultation.get('staff_id')
         if staff_id:
-            staff = staffs_collection.find_one({'staff_id': staff_id}, {'first_name': 1, 'last_name': 1, '_id': 0})
+            staff = staffs_collection.find_one({'staff_id': staff_id}, {'first_name': 1, 'last_name': 1})
             if staff:
+                staff = aes_encryption.decrypt_collection_document(staff)
                 staff_name = f"{staff['first_name']} {staff['last_name']}"
             else:
                 staff_name = "Unknown Staff"
             consultation['staff_name'] = staff_name
             del consultation['staff_id']
+
+    encrypted_data, encrypted_private_pem, encrypted_public_pem = encrypt_transfer_data(patient)
+    rsa_encryption.insert_encryted_document_key(transfer_request_id, encrypted_private_pem, encrypted_public_pem)
 
     request_from_healthcare_provider_id = transfer_request.get('request_from_healthcare_provider_id')
     healthcare_provider_url = get_healthcare_provider_url(request_from_healthcare_provider_id, TRANSFER_ENDPOINT)
@@ -932,7 +1020,7 @@ def patient_data_transfer_send(transfer_request_id):
         'Authorization': f'Bearer {access_token}'
     }
 
-    response = requests.post(healthcare_provider_url, json=patient, headers=headers)
+    response = requests.post(healthcare_provider_url, json=encrypted_data, headers=headers)
     if response.status_code == 200:
         print('Request sent successfully')
         print(response.json())
@@ -954,13 +1042,38 @@ def patient_data_transfer_send(transfer_request_id):
 def patient_data_transfer_receive():
     patient_data = sanitize_input(request.json)
 
+    to_transfer_request_id = int(patient_data['to_transfer_request_id'])
+    from_transfer_request_id = int(patient_data['from_transfer_request_id'])
+
+    transfer_request = transfer_request_sent_collection.find_one({'transfer_request_id': from_transfer_request_id})
+    print(transfer_request)
+    request_to_healthcare_provider_id = transfer_request.get('request_to_healthcare_provider_id')
+
+    healthcare_provider_url = get_healthcare_provider_url(request_to_healthcare_provider_id, KEY_ENDPOINT)
+    status_code, access_token = get_access_token_ghs()
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    key = None
+    response = requests.get(f'{healthcare_provider_url}/{to_transfer_request_id}', headers=headers)
+    if response.status_code == 200:
+        print(f'Request key fetched successfully: ')
+        data = response.json()
+        key = data['key']
+    else:
+        print(f'Failed to sent request: {response.status_code}')
+        print(response.text)
+
+    patient_data = decrypt_tranfer_data(patient_data, key)
+
+    add_transaction_to_blockchain(patient_data)
+
     last_patient = patients_collection.find_one(sort=[("patient_id", -1)])
     new_patient_id = last_patient['patient_id'] + 1 if last_patient else 1
 
     healthcare_provider = healthcare_provider_collection.find_one(sort=[("healthcare_provider_id", -1)])
     healthcare_provider_id = healthcare_provider['healthcare_provider_id'] if last_patient else 1
-
-    from_transfer_request_id = patient_data['from_transfer_request_id']
 
     patient_data['patient_id'] = new_patient_id
     patient_data['healthcare_provider_id'] = healthcare_provider_id
@@ -991,13 +1104,72 @@ def patient_data_transfer_receive():
     aes_encryption.insert_encryted_document_key(inserted_id, encrypted_dek)
 
     transfer_request_sent_collection.update_one(
-        {'transfer_request_id': from_transfer_request_id},
-        {'$set': {'request_status': PATIENT_DATA_RECEIVED}}
+        { 'transfer_request_id': from_transfer_request_id },
+        {
+            '$set': {
+                'request_status' : PATIENT_DATA_RECEIVED,
+                'to_transfer_request_id' : to_transfer_request_id
+            }
+        }
     )
 
-    add_transaction_to_blockchain(patient_data)
-
     return jsonify({"message": "Patient data received successfully"}), 200
+
+@app.route('/api/staff/transfer/request/patient/data/integrity/check/<transfer_request_id>', methods=['GET'])
+@token_required_internal_call
+@role_required
+def transfer_patient_data_integrity_check(transfer_request_id):
+    transfer_request_id = int(transfer_request_id)
+
+    if transfer_request_id is None:
+        return jsonify({"error": "Invalid Request Id"}), 400
+
+    transfer_request = transfer_request_sent_collection.find_one({'transfer_request_id': transfer_request_id})
+    request_to_healthcare_provider_id = transfer_request["request_to_healthcare_provider_id"]
+    to_transfer_request_id = transfer_request["to_transfer_request_id"]
+
+    result = blockchain_collection.find_one({"transactions.to_transfer_request_id": to_transfer_request_id, "transactions.request_status": PATIENT_DATA_TRANSFERRED})
+    received_data = result['transactions'][0]
+    received_data_hash = hashlib.sha256(json.dumps(received_data, sort_keys=True).encode()).hexdigest()
+
+    healthcare_provider_url = get_healthcare_provider_url(request_to_healthcare_provider_id, INTEGRITY_ENDPOINT)
+    status_code, access_token = get_access_token_ghs()
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    data = {
+        'transfer_request_id' : transfer_request_id,
+        'data_hash' : received_data_hash
+    }
+
+    response = requests.post(healthcare_provider_url, json=data, headers=headers)
+    message = None
+    if response.status_code == 200:
+        print(f'Patient data integrity check')
+        response_data = response.json()
+        message = response_data['message']
+    else:
+        print(f'Failed to sent request: {response.status_code}')
+        print(response.text)
+
+    return jsonify({'message': message}), 200
+
+@app.route('/api/staff/patient/data/integrity/check', methods=['POST'])
+@token_required_external_call
+def patient_data_integrity_check():
+    data = sanitize_input(request.json)
+    transfer_request_id = int(data['transfer_request_id'])
+    received_data_hash = data['data_hash']
+
+    result = blockchain_collection.find_one({"transactions.to_transfer_request_id": transfer_request_id, "transactions.request_status": PATIENT_DATA_TRANSFERRED})
+    sent_data = result['transactions'][0]
+    sent_data_hash = hashlib.sha256(json.dumps(sent_data, sort_keys=True).encode()).hexdigest()
+
+    if received_data_hash == sent_data_hash:
+        return jsonify({'status': 'Success', 'message': 'Data integrity verified'}), 200
+    else:
+        return jsonify({'status': 'Failure', 'message': 'Data is compromised'}), 400
 
 @app.route('/logout')
 def logout():
