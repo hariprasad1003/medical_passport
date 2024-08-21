@@ -20,7 +20,6 @@
                             <div class="form-group">
                                 <label for="password">Password</label>
                                 <input type="password" class="form-control" id="password" name="password" required onkeyup="validatePassword()">
-                                <small id="passwordHelp" class="form-text text-muted">Must be at least 8 characters long, contain uppercase and lowercase letters, a number, and a special character.</small>
                                 <div id="passwordError" class="text-danger"></div>
                             </div>
                             <div class="form-group">
@@ -51,11 +50,30 @@
                                 <label for="post_code">Post Code</label>
                                 <input type="text" class="form-control" id="post_code" name="post_code" required>
                             </div>
-                            <button type="submit" class="btn btn-primary btn-block">Register</button>
+                            <button type="submit" class="btn btn-primary btn-block" id="submitBtn">Register</button>
                         </form>
                     </div>
                 </div>
             </div>
         </div>
     </div>
+    
+    <script>
+        function validatePassword() {
+            const password = document.getElementById('password').value;
+            const passwordError = document.getElementById('passwordError');
+            const submitBtn = document.getElementById('submitBtn');
+            
+            const regex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+            
+            if (regex.test(password)) {
+                passwordError.textContent = '';
+                submitBtn.disabled = false;
+            } else {
+                passwordError.textContent = 'Password must be at least 8 characters long, contain uppercase and lowercase letters, a number, and a special character.';
+                submitBtn.disabled = false;
+            }
+        }
+    </script>
+
 {% endblock %}

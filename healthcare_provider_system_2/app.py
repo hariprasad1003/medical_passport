@@ -14,7 +14,6 @@ from flask_limiter.util import get_remote_address
 import jwt
 from functools import wraps
 from markupsafe import escape
-from flask_wtf.csrf import CSRFProtect
 from werkzeug.security import generate_password_hash, check_password_hash
 from blockchain import Blockchain
 from bson import ObjectId
@@ -26,7 +25,6 @@ import json
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# csrf = CSRFProtect(app)
 
 app.config.update(
     SESSION_COOKIE_SECURE=True,
@@ -62,13 +60,15 @@ REQUEST_RECEIVED = 1
 REQUEST_APPROVED = 2
 PATIENT_DATA_TRANSFERRED = 3
 PATIENT_DATA_RECEIVED = 4
+REQUEST_RECEIVED_PATIENT_NOT_FOUND = -1
 
 request_statuses = {
     REQUEST_SENT: "Request Sent",
     REQUEST_RECEIVED: "Request Received",
     REQUEST_APPROVED: "Request Approved",
     PATIENT_DATA_TRANSFERRED: "Patient Data Transferred",
-    PATIENT_DATA_RECEIVED: "Patient Data Received"
+    PATIENT_DATA_RECEIVED: "Patient Data Received",
+    REQUEST_RECEIVED_PATIENT_NOT_FOUND: "Request Received but Patient Data Not Found"
 }
 
 PATIENT=0
@@ -305,23 +305,24 @@ def add_transaction_to_blockchain(transfer_request):
     previous_hash = blockchain.hash(blockchain.last_block)
     block = blockchain.new_block(proof, previous_hash)
 
-
 def token_required_internal_call(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-
         token_from_request = request.headers.get('Authorization')
-        token_from_session = None
-
-        if not token_from_request:
-            token_from_session = session.get('access_token')
+        token_from_session = session.get('access_token')
 
         if not token_from_request and not token_from_session:
             return jsonify({'message': 'Token is missing!'}), 403
 
+
+        if token_from_request:
+            token_from_request = token_from_request.split(" ")[1]
+
+            if not token_from_session or (token_from_session != token_from_request):
+                return jsonify({'message': 'Invalid or expired token!'}), 403
+
         try:
             if token_from_request:
-                token_from_request = token_from_request.split(" ")[1]
                 data = jwt.decode(token_from_request, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
             elif token_from_session:
                 data = jwt.decode(token_from_session, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
@@ -331,7 +332,6 @@ def token_required_internal_call(f):
             return jsonify({'message': 'Invalid token!'}), 403
 
         return f(*args, **kwargs)
-
     return decorated
 
 def token_required_external_call(f):
@@ -381,13 +381,7 @@ def role_required(f):
 def encrypt_transfer_data(document):
     private_key, public_key = rsa_encryption.generate_keys()
     encrypted_data = rsa_encryption.encrypt_document(document, public_key)
-
-    print('encrypted_data', encrypted_data)
-
     encrypted_data = rsa_encryption.encode_to_base64(encrypted_data)
-
-    print('encrypted_data', encrypted_data)
-    
     private_key_pem = rsa_encryption.convert_private_key_to_pem(private_key)
     public_key_pem = rsa_encryption.convert_public_key_to_pem(public_key)
 
@@ -397,14 +391,10 @@ def encrypt_transfer_data(document):
     return encrypted_data, encrypted_private_pem, encrypted_public_pem
 
 def decrypt_tranfer_data(document, key):
-    print('decrypt_tranfer_data document, key', document, key)
     private_key_bytes = base64.b64decode(key)
     private_key = rsa_encryption.convert_pem_to_private_key(private_key_bytes)
-    print('decrypt_tranfer_data private_key', private_key)
     document = rsa_encryption.decode_from_base64(document)
-    print('decrypt_tranfer_data document', document)
     decrypted_document = rsa_encryption.decrypt_document(document, private_key)
-    print('decrypt_tranfer_data decrypted_document', decrypted_document)
     return decrypted_document
 
 @app.route('/')
@@ -418,17 +408,20 @@ def login():
         password = request.form['password']
 
         user = users_collection.find_one({'email_address': email_address})
-        user = aes_encryption.decrypt_collection_document(user)
-
-        if user and user['password'] == password:
-            otp = generate_otp()
-            session['otp'] = otp
-            access_token = create_token(email_address)
-            session['access_token'] = access_token
-            session['email'] = email_address
-            session['role'] = user['role']
-            send_otp_email(otp, email_address)
-            return redirect(url_for('mfa'))
+        if user:
+            user = aes_encryption.decrypt_collection_document(user)
+            if user and user['password'] == password:
+                otp = generate_otp()
+                session['otp'] = otp
+                access_token = create_token(email_address)
+                session['access_token'] = access_token
+                session['email'] = email_address
+                session['role'] = user['role']
+                send_otp_email(otp, email_address)
+                return redirect(url_for('mfa'))
+            else:
+                error = 'Invalid Credentials. Please try again.'
+                return render_template('login.html', error=error)
         else:
             error = 'Invalid Credentials. Please try again.'
             return render_template('login.html', error=error)
@@ -500,6 +493,7 @@ def register():
         access_token = create_token(email_address)
         session['access_token'] = access_token
         session['email'] = email_address
+        session['role'] = PATIENT
         send_otp_email(otp, email_address)
 
         return redirect(url_for('mfa'))
@@ -667,7 +661,7 @@ def patient_data_transfer_request_sent():
     house_number = escape(data.get('house_number'))
     post_code = escape(data.get('post_code'))
 
-    last_transfer_request_sent = transfer_request_sent_collection.find_one(sort=[("user_id", -1)])
+    last_transfer_request_sent = transfer_request_sent_collection.find_one(sort=[("transfer_request_id", -1)])
     new_transfer_request_id = last_transfer_request_sent['transfer_request_id'] + 1 if last_transfer_request_sent else 1
 
     healthcare_provider = healthcare_provider_collection.find_one(sort=[("healthcare_provider_id", -1)])
@@ -710,7 +704,6 @@ def patient_data_transfer_request_sent():
     }
 
     encrypted_data, encrypted_private_pem, encrypted_public_pem = encrypt_transfer_data(transfer_data_request_query)
-    print('inside encrypted_data', encrypted_data)
     rsa_encryption.insert_encryted_document_key(new_transfer_request_id, encrypted_private_pem, encrypted_public_pem)
 
     healthcare_provider_url = get_healthcare_provider_url(healthcare_provider_to_id, REQUEST_ENDPOINT)
@@ -734,21 +727,13 @@ def patient_data_transfer_request_sent():
 def patient_data_transfer_request_get_key(transfer_request_id):
     document = rsa_encryption.get_encrypted_document_key(transfer_request_id)
 
-    print('patient_data_transfer_request_get_key document', document)
-
     encrypted_private_pem = document['encrypted_private_key']
     encrypted_public_pem = document['encrypted_public_key']
-
-    print('patient_data_transfer_request_get_key encrypted_private_pem, encrypted_public_pem', encrypted_private_pem, encrypted_public_pem)
 
     decrypted_private_pem = aes_encryption.decrypt_dek(encrypted_private_pem, rsa_encryption.kek2_bytes)
     decrypted_public_pem = aes_encryption.decrypt_dek(encrypted_public_pem, rsa_encryption.kek2_bytes)
 
-    print('patient_data_transfer_request_get_key decrypted_private_pem, decrypted_public_pem', decrypted_private_pem, decrypted_public_pem)
-
     private_key_str = base64.b64encode(decrypted_private_pem).decode('utf-8')
-
-    print('patient_data_transfer_request_get_key private_key_str', private_key_str)
 
     return jsonify({"key": private_key_str}), 200
 
@@ -757,12 +742,8 @@ def patient_data_transfer_request_get_key(transfer_request_id):
 def patient_data_transfer_request_received():
     data = request.json
 
-    print('patient_data_transfer_request_received data', data)
-
     healthcare_provider_from_id = int(escape(data.get('healthcare_provider_id')))
     from_transfer_request_id = int(escape(data.get('from_transfer_request_id')))
-
-    print('patient_data_transfer_request_received healthcare_provider_from_id, from_transfer_request_id', healthcare_provider_from_id, from_transfer_request_id)
 
     healthcare_provider_url = get_healthcare_provider_url(healthcare_provider_from_id, KEY_ENDPOINT)
     status_code, access_token = get_access_token_ghs()
@@ -776,23 +757,18 @@ def patient_data_transfer_request_received():
         print(f'Request key fetched successfully: ')
         response_data = response.json()
         key = response_data['key']
-        print('patient_data_transfer_request_received key', key)
     else:
         print(f'Failed to sent request: {response.status_code}')
         print(response.text)
 
-    print('patient_data_transfer_request_received data, key', data, key)
     data = decrypt_tranfer_data(data, key)
-
-    print('patient_data_transfer_request_received decrypted data', data)
-
-    country = escape(data.get('country'))
 
     first_name = escape(data.get('first_name'))
     last_name = escape(data.get('last_name'))
     date_of_birth = escape(data.get('date_of_birth'))
     house_number = escape(data.get('house_number'))
     post_code = escape(data.get('post_code'))
+    country = escape(data.get('country'))
 
     last_transfer_request_received = transfer_request_received_collection.find_one(sort=[("user_id", -1)])
     new_transfer_request_id = last_transfer_request_received['transfer_request_id'] + 1 if last_transfer_request_received else 1
@@ -802,15 +778,35 @@ def patient_data_transfer_request_received():
 
     patient = find_patient_by_first_name(first_name, last_name, date_of_birth, house_number, post_code, country)
 
+    patient_id = REQUEST_RECEIVED_PATIENT_NOT_FOUND
+    request_status = REQUEST_RECEIVED_PATIENT_NOT_FOUND
+    if(patient != None and len(patient) > 0):
+        patient_id = patient.get('patient_id')
+        request_status = REQUEST_RECEIVED
+
     transfer_request = {
         'transfer_request_id' : new_transfer_request_id,
         'from_transfer_request_id' : from_transfer_request_id,
         'request_from_healthcare_provider_id' : healthcare_provider_from_id,
         'request_to_healthcare_provider_id' : health_provider_to_id,
         'request_type' : REQUEST_RECEIVED,
-        "patient_id": patient.get('patient_id'),
-        'request_status' : REQUEST_RECEIVED
+        "patient_id": patient_id,
+        'request_status' : request_status
     }
+
+    if patient_id == REQUEST_RECEIVED_PATIENT_NOT_FOUND:
+        patient_info = {
+            'first_name' : first_name,
+            'last_name' : last_name,
+            'date_of_birth' : date_of_birth,
+            'address' : {
+                'house_number' : house_number,
+                'post_code' : post_code,
+                'country' : country
+            }
+        }
+
+        transfer_request["patient_info"] = patient_info
 
     transfer_request_received_collection.insert_one(transfer_request)
 
@@ -818,12 +814,12 @@ def patient_data_transfer_request_received():
 
     data = {
         'transfer_request_id' : from_transfer_request_id,
-        'transfer_request_status' : REQUEST_RECEIVED
+        'transfer_request_status' : request_status
     }
 
     response = requests.post(healthcare_provider_url, json=data, headers=headers)
     if response.status_code == 200:
-        print(f'Request status updated successfully: {REQUEST_RECEIVED}')
+        print(f'Request status updated successfully: {request_status}')
         print(response.json())
     else:
         print(f'Failed to sent request: {response.status_code}')
@@ -863,15 +859,17 @@ def patient_data_transfer_request_received_list():
 
     sanitized_requests = []
     for request in transfer_requests_received:
-        patient = patients_collection.find_one({'patient_id': request['patient_id']})
-        patient = aes_encryption.decrypt_collection_document(patient)
+        patient_id = request['patient_id']
+        if patient_id != REQUEST_RECEIVED_PATIENT_NOT_FOUND:
+            patient = patients_collection.find_one({'patient_id': patient_id})
+            patient = aes_encryption.decrypt_collection_document(patient)
+            request['patient_info'] = {
+                'first_name' : patient.get('first_name'),
+                'last_name' : patient.get('last_name'),
+                'date_of_birth' : format_date_of_birth(patient.get('date_of_birth')),
+                'address' : patient.get('address')
+            }
         del request['_id']
-        request['patient_info'] = {
-            'first_name' : patient.get('first_name'),
-            'last_name' : patient.get('last_name'),
-            'date_of_birth' : format_date_of_birth(patient.get('date_of_birth')),
-            'address' : patient.get('address')
-        }
         request['from_provider_name'] = get_provider_name(request['request_from_healthcare_provider_id'])
         request['to_provider_name'] = get_provider_name(request['request_to_healthcare_provider_id'])
         sanitized_requests.append(request)
@@ -883,7 +881,7 @@ def patient_data_transfer_request_received_list():
 @role_required
 def patient_data_transfer_request_received_list_endpoint_for_patient(patient_id):
 
-    transfer_requests_received = list(transfer_request_received_collection.find({'patient_id': int(patient_id)}))
+    transfer_requests_received = list(transfer_request_received_collection.find({'patient_id': int(escape(patient_id))}))
 
     sanitized_requests = []
     for request in transfer_requests_received:
@@ -899,7 +897,7 @@ def patient_data_transfer_request_received_list_endpoint_for_patient(patient_id)
 @role_required
 def patient_transfer_request_approve(transfer_request_id):
 
-    transfer_request_id = int(transfer_request_id)
+    transfer_request_id = int(escape(transfer_request_id))
 
     if transfer_request_id is None:
         return jsonify({"error": "Invalid Request Id"}), 400
@@ -967,7 +965,7 @@ def patient_data_transfer_request_status_update():
 @role_required
 def patient_data_transfer_send(transfer_request_id):
 
-    transfer_request_id = int(transfer_request_id)
+    transfer_request_id = int(escape(transfer_request_id))
 
     if transfer_request_id is None:
         return jsonify({"error": "Invalid Request Id"}), 400
@@ -1047,7 +1045,6 @@ def patient_data_transfer_receive():
     from_transfer_request_id = int(patient_data['from_transfer_request_id'])
 
     transfer_request = transfer_request_sent_collection.find_one({'transfer_request_id': from_transfer_request_id})
-    print(transfer_request)
     request_to_healthcare_provider_id = transfer_request.get('request_to_healthcare_provider_id')
 
     healthcare_provider_url = get_healthcare_provider_url(request_to_healthcare_provider_id, KEY_ENDPOINT)
@@ -1120,7 +1117,7 @@ def patient_data_transfer_receive():
 @token_required_internal_call
 @role_required
 def transfer_patient_data_integrity_check(transfer_request_id):
-    transfer_request_id = int(transfer_request_id)
+    transfer_request_id = int(escape(transfer_request_id))
 
     if transfer_request_id is None:
         return jsonify({"error": "Invalid Request Id"}), 400
@@ -1147,7 +1144,6 @@ def transfer_patient_data_integrity_check(transfer_request_id):
     response = requests.post(healthcare_provider_url, json=data, headers=headers)
     message = None
     if response.status_code == 200:
-        print(f'Patient data integrity check')
         response_data = response.json()
         message = response_data['message']
     else:

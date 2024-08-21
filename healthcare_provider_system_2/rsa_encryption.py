@@ -69,7 +69,6 @@ def decrypt_data(encrypted_data, private_key):
     return decrypted_data
 
 def decrypt_document(encrypted_document, private_key):
-    print('rsa_encryption decrypt_document encrypted_document, private_key', encrypted_document, private_key)
     decrypted_document = {}
     for key, value in encrypted_document.items():
         if key not in non_encrypt_list:

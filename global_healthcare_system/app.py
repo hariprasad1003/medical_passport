@@ -9,6 +9,7 @@ from flask_limiter.util import get_remote_address
 import jwt
 from functools import wraps
 from datetime import datetime, timedelta
+from markupsafe import escape
 
 app = Flask(__name__)
 
@@ -63,7 +64,7 @@ def get_access_token_for_healthcare_provider(healthcare_provider_id):
         if not client_id or not client_token:
             return jsonify({'error': 'Client-Id and Client-Token headers are required.'}), 400
 
-        healthcare_provider = healthcare_provider_collection.find_one({'healthcare_provider_id': int(healthcare_provider_id)})
+        healthcare_provider = healthcare_provider_collection.find_one({'healthcare_provider_id': int(escape(healthcare_provider_id))})
         healthcare_provider = aes_encryption.decrypt_collection_document(healthcare_provider)
         healthcare_provider_client_id = str(healthcare_provider['client_id'])
         healthcare_provider_client_token = str(healthcare_provider['client_token'])
@@ -111,7 +112,7 @@ def get_all_healthcare_provider_details():
 @token_required
 def get_healthcare_provider_by_id(healthcare_provider_id):
     try:
-        healthcare_provider = healthcare_provider_collection.find_one({'healthcare_provider_id': int(healthcare_provider_id)})
+        healthcare_provider = healthcare_provider_collection.find_one({'healthcare_provider_id': int(escape(healthcare_provider_id))})
         healthcare_provider = aes_encryption.decrypt_collection_document(healthcare_provider)
         del healthcare_provider['_id']
         
