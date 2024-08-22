@@ -4,3 +4,5 @@ pymongo
 flask_limiter
 flask-wtf
 cryptography
+pycryptodome
+PyJWT

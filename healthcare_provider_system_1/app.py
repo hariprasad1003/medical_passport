@@ -43,6 +43,9 @@ load_dotenv()
 
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY')
 
+KEK_COMMON = os.getenv('KEK_COMMON')
+kek_common_bytes = base64.b64decode(KEK_COMMON)
+
 client = MongoClient(os.getenv('MONGO_URI'))
 db = client[os.getenv('DB_NAME')]
 healthcare_provider_collection = db['healthcare_provider']
@@ -735,7 +738,9 @@ def patient_data_transfer_request_get_key(transfer_request_id):
 
     private_key_str = base64.b64encode(decrypted_private_pem).decode('utf-8')
 
-    return jsonify({"key": private_key_str}), 200
+    encrypted_private_key_pem = aes_encryption.encrypt_dek(private_key_str.encode('utf-8'), kek_common_bytes)
+
+    return jsonify({"key": encrypted_private_key_pem}), 200
 
 @app.route('/api/staff/data/patient/transfer/request/received', methods=['POST'])
 @token_required_external_call
@@ -756,7 +761,8 @@ def patient_data_transfer_request_received():
     if response.status_code == 200:
         print(f'Request key fetched successfully: ')
         response_data = response.json()
-        key = response_data['key']
+        encrypted_key = response_data['key']
+        key = aes_encryption.decrypt_dek(encrypted_key, kek_common_bytes)
     else:
         print(f'Failed to sent request: {response.status_code}')
         print(response.text)
@@ -1058,7 +1064,8 @@ def patient_data_transfer_receive():
     if response.status_code == 200:
         print(f'Request key fetched successfully: ')
         data = response.json()
-        key = data['key']
+        encrypted_key = data['key']
+        key = aes_encryption.decrypt_dek(encrypted_key, kek_common_bytes)
     else:
         print(f'Failed to sent request: {response.status_code}')
         print(response.text)
