@@ -97,7 +97,7 @@ def validate_healthcare_provider_access_token():
 @token_required
 def get_all_healthcare_provider_details():
     try:
-        all_healthcare_providers_list = list(healthcare_provider_collection.find())
+        all_healthcare_providers_list = list(healthcare_provider_collection.find({}, {'client_id': 0, 'client_token': 0}))
         healthcare_providers_list = []
         for healthcare_provider in all_healthcare_providers_list:
             healthcare_provider = aes_encryption.decrypt_collection_document(healthcare_provider)
@@ -112,11 +112,10 @@ def get_all_healthcare_provider_details():
 @token_required
 def get_healthcare_provider_by_id(healthcare_provider_id):
     try:
-        healthcare_provider = healthcare_provider_collection.find_one({'healthcare_provider_id': int(escape(healthcare_provider_id))})
-        healthcare_provider = aes_encryption.decrypt_collection_document(healthcare_provider)
-        del healthcare_provider['_id']
-        
+        healthcare_provider = healthcare_provider_collection.find_one({'healthcare_provider_id': int(escape(healthcare_provider_id))}, {'client_id': 0, 'client_token': 0})        
         if healthcare_provider:
+            healthcare_provider = aes_encryption.decrypt_collection_document(healthcare_provider)
+            del healthcare_provider['_id']
             return jsonify(healthcare_provider), 200
         else:
             return jsonify({'error': 'Healthcare provider not found'}), 404
