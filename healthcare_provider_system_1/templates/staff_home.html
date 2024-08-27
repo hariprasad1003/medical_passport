@@ -46,7 +46,16 @@
                 <li class="list-group-item"><strong>First Name:</strong> {{ user_info.first_name }}</li>
                 <li class="list-group-item"><strong>Last Name:</strong> {{ user_info.last_name }}</li>
                 <li class="list-group-item"><strong>Email:</strong> {{ user_info.email_address }}</li>
-                <li class="list-group-item"><strong>Role:</strong> {{ user_info.role }}</li>
+                <li class="list-group-item">
+                    <strong>Role:</strong>
+                    {% if user_info.role == 0 %}
+                        Admin
+                    {% elif user_info.role == 1 %}
+                        Doctor
+                    {% else %}
+                        Unknown Role
+                    {% endif %}
+                </li>
                 <li class="list-group-item"><strong>Years of Experience:</strong> {{ user_info.years_of_experience }}</li>
                 <li class="list-group-item"><strong>Qualifications:</strong> {{ user_info.qualifications }}</li>
                 <li class="list-group-item"><strong>Address:</strong> {{ user_info.house_number }}, {{ user_info.post_code }}, {{ user_info.country }}</li>

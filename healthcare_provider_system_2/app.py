@@ -21,6 +21,7 @@ import rsa_encryption
 import base64
 import hashlib
 import json
+from cryptography.fernet import Fernet
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -40,6 +41,9 @@ limiter = Limiter(
 limiter.init_app(app)
 
 load_dotenv()
+
+fernet_key = Fernet.generate_key()
+cipher_suite = Fernet(fernet_key)
 
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY')
 
@@ -312,7 +316,7 @@ def token_required_internal_call(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token_from_request = request.headers.get('Authorization')
-        token_from_session = session.get('access_token')
+        token_from_session = decrypt_session_data(session.get('access_token'))
 
         if not token_from_request and not token_from_session:
             return jsonify({'message': 'Token is missing!'}), 403
@@ -368,7 +372,7 @@ def token_required_external_call(f):
 def role_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        user_role = session.get('role')
+        user_role = int(decrypt_session_data(session.get('role')))
         if user_role == None:
             abort(403, 'Access denied: No role defined in session.')
 
@@ -400,6 +404,15 @@ def decrypt_tranfer_data(document, key):
     decrypted_document = rsa_encryption.decrypt_document(document, private_key)
     return decrypted_document
 
+def encrypt_session_data(data):
+    encrypted_data = cipher_suite.encrypt(data.encode())
+    return base64.urlsafe_b64encode(encrypted_data).decode()
+
+def decrypt_session_data(data):
+    encrypted_data = base64.urlsafe_b64decode(data)
+    decrypted_data = cipher_suite.decrypt(encrypted_data).decode()
+    return decrypted_data
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -415,11 +428,11 @@ def login():
             user = aes_encryption.decrypt_collection_document(user)
             if user and user['password'] == password:
                 otp = generate_otp()
-                session['otp'] = otp
+                session['otp'] = encrypt_session_data(otp)
                 access_token = create_token(email_address)
-                session['access_token'] = access_token
-                session['email'] = email_address
-                session['role'] = user['role']
+                session['access_token'] = encrypt_session_data(access_token)
+                session['email'] = encrypt_session_data(email_address)
+                session['role'] = encrypt_session_data(str(user['role']))
                 send_otp_email(otp, email_address)
                 return redirect(url_for('mfa'))
             else:
@@ -492,11 +505,11 @@ def register():
         aes_encryption.insert_encryted_document_key(inserted_id, encrypted_dek)
 
         otp = generate_otp()
-        session['otp'] = otp
+        session['otp'] = encrypt_session_data(otp)
         access_token = create_token(email_address)
-        session['access_token'] = access_token
-        session['email'] = email_address
-        session['role'] = PATIENT
+        session['access_token'] = encrypt_session_data(access_token)
+        session['email'] = encrypt_session_data(email_address)
+        session['role'] = encrypt_session_data(str(PATIENT))
         send_otp_email(otp, email_address)
 
         return redirect(url_for('mfa'))
@@ -506,7 +519,7 @@ def register():
 def mfa():
     if request.method == 'POST':
         mfa_code = request.form['mfa_code']
-        if 'otp' in session and session['otp'] == mfa_code:
+        if 'otp' in session and decrypt_session_data(session['otp']) == mfa_code:
             session.pop('otp', None)
             session['logged_in'] = True
             return redirect(url_for('home'))
@@ -514,14 +527,14 @@ def mfa():
             error = 'Invalid MFA code. Please try again.'
             return render_template('mfa.html', error=error)
     
-    return render_template('mfa.html', email_address=session.get('email'))
+    return render_template('mfa.html', email_address=decrypt_session_data(session.get('email')))
 
 @app.route('/home', methods=['GET'])
 def home():
     if not session.get('logged_in'):
         return redirect(url_for('login'))
 
-    email_address = session.get('email')
+    email_address = decrypt_session_data(session.get('email'))
     if not email_address:
         return redirect(url_for('login'))
 
@@ -540,7 +553,7 @@ def home():
 @token_required_internal_call
 @role_required
 def patient_home():
-    email_address = session.get('email')
+    email_address = decrypt_session_data(session.get('email'))
     user = users_collection.find_one({'email_address': email_address})
     if not user or user['role'] != PATIENT:
         return redirect(url_for('login'))
@@ -575,13 +588,13 @@ def patient_home():
         'medication': patient['medication']
     }
 
-    return render_template('patient_home.html', user_info=user_info, access_token=session.get('access_token'), request_statuses=request_statuses)
+    return render_template('patient_home.html', user_info=user_info, access_token=decrypt_session_data(session.get('access_token')), request_statuses=request_statuses)
 
 @app.route('/staff/home', methods=['GET'])
 @token_required_internal_call
 @role_required
 def staff_home():
-    email_address = session.get('email')
+    email_address = decrypt_session_data(session.get('email'))
     user = users_collection.find_one({'email_address': email_address})
     if not user or user['role'] != STAFF:
         return redirect(url_for('login'))
@@ -609,7 +622,7 @@ def staff_home():
     healthcare_providers_list = get_global_healthcare_providers_details()
     global_healthcare_providers_details = get_healthcare_providers_list_based_on_country(healthcare_providers_list)
 
-    return render_template('staff_home.html', user_info=user_info, access_token=session.get('access_token'),global_healthcare_providers_details=global_healthcare_providers_details, request_statuses=request_statuses)
+    return render_template('staff_home.html', user_info=user_info, access_token=decrypt_session_data(session.get('access_token')),global_healthcare_providers_details=global_healthcare_providers_details, request_statuses=request_statuses)
 
 @app.route('/api/staff/home/patients/list', methods=['GET'])
 @token_required_internal_call
@@ -886,6 +899,12 @@ def patient_data_transfer_request_received_list():
 @token_required_internal_call
 @role_required
 def patient_data_transfer_request_received_list_endpoint_for_patient(patient_id):
+    email_address = decrypt_session_data(session.get('email'))
+    user = users_collection.find_one({'email_address': email_address})
+    patient = patients_collection.find_one({'user_id': user['user_id']})
+    current_patient_id = patient['patient_id']
+    if int(current_patient_id) != int(patient_id):
+        return jsonify({"error": "Unauthorized access to Transfer Requests Received List"}), 403
 
     transfer_requests_received = list(transfer_request_received_collection.find({'patient_id': int(escape(patient_id))}))
 
@@ -909,11 +928,19 @@ def patient_transfer_request_approve(transfer_request_id):
         return jsonify({"error": "Invalid Request Id"}), 400
     
     transfer_request = transfer_request_received_collection.find_one({'transfer_request_id': transfer_request_id})
-    from_transfer_request_id = transfer_request["from_transfer_request_id"]
-    healthcare_provider_from_id = transfer_request["request_from_healthcare_provider_id"]
 
     if not transfer_request:
         return jsonify({"error": "Request Id not found"}), 404
+
+    from_transfer_request_id = transfer_request["from_transfer_request_id"]
+    healthcare_provider_from_id = transfer_request["request_from_healthcare_provider_id"]
+
+    email_address = decrypt_session_data(session.get('email'))
+    user = users_collection.find_one({'email_address': email_address})
+    patient = patients_collection.find_one({'user_id': user['user_id']})
+    current_patient_id = patient['patient_id']
+    if transfer_request.get('patient_id') != current_patient_id:
+        return jsonify({"error": "Unauthorized Approval Attempt"}), 403
 
     updated_document = transfer_request_received_collection.find_one_and_update(
         {'transfer_request_id': transfer_request_id},
@@ -1134,6 +1161,7 @@ def transfer_patient_data_integrity_check(transfer_request_id):
     to_transfer_request_id = transfer_request["to_transfer_request_id"]
 
     result = blockchain_collection.find_one({"transactions.to_transfer_request_id": to_transfer_request_id, "transactions.request_status": PATIENT_DATA_TRANSFERRED})
+    result = aes_encryption.decrypt_collection_document(result)
     received_data = result['transactions'][0]
     received_data_hash = hashlib.sha256(json.dumps(received_data, sort_keys=True).encode()).hexdigest()
 
@@ -1167,6 +1195,7 @@ def patient_data_integrity_check():
     received_data_hash = data['data_hash']
 
     result = blockchain_collection.find_one({"transactions.to_transfer_request_id": transfer_request_id, "transactions.request_status": PATIENT_DATA_TRANSFERRED})
+    result = aes_encryption.decrypt_collection_document(result)
     sent_data = result['transactions'][0]
     sent_data_hash = hashlib.sha256(json.dumps(sent_data, sort_keys=True).encode()).hexdigest()
 

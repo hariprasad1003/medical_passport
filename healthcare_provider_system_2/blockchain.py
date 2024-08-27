@@ -2,6 +2,7 @@ from bson.objectid import ObjectId
 import hashlib
 import json
 from time import time
+import aes_encryption
 
 class Blockchain:
     def __init__(self, db_collection):
@@ -28,7 +29,11 @@ class Blockchain:
             return data
 
     def save_block(self, block):
-        self.db_collection.insert_one(block)
+        block, encrypted_dek = aes_encryption.encrypt_collection_document(block)
+        result = self.db_collection.insert_one(block)
+        inserted_id = result.inserted_id
+        aes_encryption.insert_encryted_document_key(inserted_id, encrypted_dek)
+        return inserted_id
 
     def new_block(self, proof, previous_hash=None):
         block = {
@@ -38,13 +43,12 @@ class Blockchain:
             'proof': proof,
             'previous_hash': previous_hash or self.hash(self.chain[-1]),
         }
-        print(block)
 
         self.current_transactions = []
 
-        self.save_block(block)
+        block_id = self.save_block(block)
 
-        block['_id'] = str(block['_id'])
+        block['_id'] = str(block_id) 
 
         self.chain.append(block)
         return block
