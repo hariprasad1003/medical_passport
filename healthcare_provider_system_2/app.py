@@ -22,6 +22,7 @@ import base64
 import hashlib
 import json
 from cryptography.fernet import Fernet
+import re
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -413,6 +414,12 @@ def decrypt_session_data(data):
     decrypted_data = cipher_suite.decrypt(encrypted_data).decode()
     return decrypted_data
 
+def validate_password(password):
+    regex = r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$'
+    if re.match(regex, password):
+        return True
+    return False
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -454,6 +461,10 @@ def register():
         gender = escape(request.form['gender'])
         house_number = escape(request.form['house_number'])
         post_code = escape(request.form['post_code'])
+
+        if not validate_password(password):
+            error = 'Password must be at least 8 characters long, contain uppercase and lowercase letters, a number, and a special character.'
+            return render_template('register.html', error=error)
 
         user = users_collection.find_one({'email_address': email_address})
         if user:
